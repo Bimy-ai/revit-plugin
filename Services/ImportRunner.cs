@@ -21,11 +21,15 @@ internal static class ImportRunner
         var doc = uiDoc.Document;
 
         Log.Info($"Fetching JSON from: {url}");
-        WallsPayload payload;
+        UserObjectsPayload payload;
+        List<WallDto> walls;
         try
         {
-            payload = JsonFetcher.FetchAsync(url).GetAwaiter().GetResult();
-            Log.Info($"Fetched {payload.Walls.Count} wall(s), units='{payload.Units}'.");
+            payload = JsonFetcher.FetchAsync<UserObjectsPayload>(url).GetAwaiter().GetResult();
+            var objectCount = payload.UserObjects?.Count ?? 0;
+            Log.Info($"Fetched {objectCount} userObject(s).");
+            walls = ProjectBuilder.BuildWalls(payload);
+            Log.Info($"Built {walls.Count} wall definition(s) from {objectCount} userObject(s).");
         }
         catch (Exception ex)
         {
@@ -50,18 +54,18 @@ internal static class ImportRunner
                 tx.SetFailureHandlingOptions(opts);
 
                 Log.Info("Creating walls…");
-                buildResult = WallBuilder.CreateWalls(doc, payload);
+                buildResult = WallBuilder.CreateWalls(doc, walls);
                 Log.Info($"Build pass finished. Created(in-memory)={buildResult.Created}, Skipped={buildResult.Errors.Count}. Committing…");
 
                 DisableActiveCrop(doc);
 
                 tx.Commit();
 
-                Log.Info($"Transaction committed. Deleted={buildResult.Deleted}, Created={buildResult.Created}, Fallback={buildResult.FallbackCount}, Skipped={buildResult.Errors.Count}.");
-                if (buildResult.MissingTypes.Count > 0)
-                    Log.Warn($"Wall types not found, substituted project default: {string.Join(", ", buildResult.MissingTypes)}");
+                Log.Info($"Transaction committed. Deleted={buildResult.Deleted}, Created={buildResult.Created}, Skipped={buildResult.Errors.Count}.");
                 if (buildResult.CreatedLevels.Count > 0)
                     Log.Info($"Auto-created levels: {string.Join(", ", buildResult.CreatedLevels)}");
+                if (buildResult.CreatedWallTypes.Count > 0)
+                    Log.Info($"Auto-created wall types: {string.Join(", ", buildResult.CreatedWallTypes)}");
                 foreach (var err in buildResult.Errors)
                     Log.Warn(err);
             }
@@ -80,7 +84,7 @@ internal static class ImportRunner
 
         ZoomOpenViewsToFit(uiDoc);
 
-        ShowSummary(buildResult, payload.Walls.Count, url);
+        ShowSummary(buildResult, walls.Count, url);
         return Result.Succeeded;
     }
 
@@ -121,14 +125,12 @@ internal static class ImportRunner
         var content = $"Source: {url}\nLog: {Log.Path}";
         if (result.Deleted > 0)
             content += $"\n\nReplaced {result.Deleted} existing wall(s) before import.";
-        if (result.FallbackCount > 0)
-            content += $"\n{result.FallbackCount} wall(s) used a fallback type/level.";
 
         var expanded = new List<string>();
-        if (result.MissingTypes.Count > 0)
-            expanded.Add("Wall types not found → substituted project default: " + string.Join(", ", result.MissingTypes));
         if (result.CreatedLevels.Count > 0)
             expanded.Add("Auto-created levels: " + string.Join(", ", result.CreatedLevels));
+        if (result.CreatedWallTypes.Count > 0)
+            expanded.Add("Auto-created wall types: " + string.Join(", ", result.CreatedWallTypes));
         if (result.Errors.Count > 0)
             expanded.Add("Skipped walls:\n - " + string.Join("\n - ", result.Errors));
 

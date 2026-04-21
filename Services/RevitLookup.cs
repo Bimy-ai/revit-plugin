@@ -7,38 +7,6 @@ internal static class RevitLookup
 {
     private const double DefaultFloorHeightMm = 3000;
 
-    public static WallType FindWallTypeOrDefault(Document doc, string name, out bool wasFallback)
-    {
-        var exact = new FilteredElementCollector(doc)
-            .OfClass(typeof(WallType))
-            .Cast<WallType>()
-            .FirstOrDefault(wt => string.Equals(wt.Name, name, StringComparison.OrdinalIgnoreCase));
-
-        if (exact is not null)
-        {
-            wasFallback = false;
-            return exact;
-        }
-
-        var defaultId = doc.GetDefaultElementTypeId(ElementTypeGroup.WallType);
-        if (defaultId != ElementId.InvalidElementId && doc.GetElement(defaultId) is WallType def)
-        {
-            wasFallback = true;
-            return def;
-        }
-
-        var any = new FilteredElementCollector(doc)
-            .OfClass(typeof(WallType))
-            .Cast<WallType>()
-            .FirstOrDefault();
-
-        if (any is null)
-            throw new InvalidOperationException("No wall types exist in the project.");
-
-        wasFallback = true;
-        return any;
-    }
-
     /// <summary>
     /// Ensures a level with each of <paramref name="names"/> exists in the document,
     /// creating missing ones at elevations inferred from names like "L3" (→ floor 3).

@@ -8,44 +8,32 @@ internal static class WallBuilder
     public sealed record Result(
         int Deleted,
         int Created,
-        int FallbackCount,
-        HashSet<string> MissingTypes,
         HashSet<string> CreatedLevels,
+        HashSet<string> CreatedWallTypes,
         List<string> Errors);
 
-    public static Result CreateWalls(Document doc, WallsPayload payload)
+    public static Result CreateWalls(Document doc, List<WallDto> walls)
     {
-        if (!string.Equals(payload.Units, "mm", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException(
-                $"Unsupported units '{payload.Units}'. Only 'mm' is supported.");
-
         var deleted = DeleteAllWalls(doc);
 
-        var referencedLevels = payload.Walls
+        var referencedLevels = walls
             .Select(w => w.Level)
             .Where(n => !string.IsNullOrWhiteSpace(n))
-            .Select(n => n!.Trim())
+            .Select(n => n.Trim())
             .ToList();
 
         var (levelByName, createdLevels) = RevitLookup.EnsureLevels(doc, referencedLevels);
+        var typeProvider = new WallTypeProvider(doc);
 
         var created = 0;
-        var fallbacks = 0;
-        var missingTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var errors = new List<string>();
 
-        for (var i = 0; i < payload.Walls.Count; i++)
+        for (var i = 0; i < walls.Count; i++)
         {
-            var wall = payload.Walls[i];
             try
             {
-                var (ok, usedFallback, missingType) = CreateOneWall(doc, wall, levelByName);
-                if (ok)
-                {
+                if (CreateOneWall(doc, walls[i], levelByName, typeProvider))
                     created++;
-                    if (usedFallback) fallbacks++;
-                    if (missingType is not null) missingTypes.Add(missingType);
-                }
             }
             catch (Exception ex)
             {
@@ -53,7 +41,7 @@ internal static class WallBuilder
             }
         }
 
-        return new Result(deleted, created, fallbacks, missingTypes, createdLevels, errors);
+        return new Result(deleted, created, createdLevels, typeProvider.CreatedWallTypes, errors);
     }
 
     private static int DeleteAllWalls(Document doc)
@@ -68,16 +56,18 @@ internal static class WallBuilder
         return deleted?.Count ?? 0;
     }
 
-    private static (bool created, bool usedFallback, string? missingType)
-        CreateOneWall(Document doc, WallDto dto, Dictionary<string, Level> levelByName)
+    private static bool CreateOneWall(
+        Document doc,
+        WallDto dto,
+        Dictionary<string, Level> levelByName,
+        WallTypeProvider typeProvider)
     {
-        if (string.IsNullOrWhiteSpace(dto.Type))   throw new InvalidOperationException("Missing 'type'.");
-        if (string.IsNullOrWhiteSpace(dto.Level))  throw new InvalidOperationException("Missing 'level'.");
+        if (string.IsNullOrWhiteSpace(dto.Level)) throw new InvalidOperationException("Missing 'level'.");
         if (dto.Start is null || dto.Start.Length < 2) throw new InvalidOperationException("'start' must be [x, y] in mm.");
         if (dto.End   is null || dto.End.Length   < 2) throw new InvalidOperationException("'end' must be [x, y] in mm.");
         if (dto.Height <= 0) throw new InvalidOperationException("'height' must be > 0 mm.");
 
-        var wallType = RevitLookup.FindWallTypeOrDefault(doc, dto.Type!, out var typeFallback);
+        var wallType = typeProvider.Get(dto.ColorHex);
         var level = RevitLookup.ResolveLevel(levelByName, dto.Level!.Trim());
 
         var start = new XYZ(MmToFeet(dto.Start[0]), MmToFeet(dto.Start[1]), 0);
@@ -99,10 +89,7 @@ internal static class WallBuilder
             flip: false,
             structural: false);
 
-        return (
-            created: true,
-            usedFallback: typeFallback,
-            missingType: typeFallback ? dto.Type! : null);
+        return true;
     }
 
     private static double MmToFeet(double mm)
