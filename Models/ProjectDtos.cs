@@ -36,6 +36,16 @@ public sealed class UserObjectDto
 
 public sealed class FloorTypeDto
 {
+    /// <summary>Stable identity used to link walls/floors/ceilings across stories.
+    /// Two types with the same Id share Revit WallType/FloorType/CeilingType.</summary>
+    [JsonPropertyName("_id")]
+    public string? Id { get; set; }
+
+    /// <summary>Position of the type within its parent UserObject. Mirrors the
+    /// indices used in <see cref="UserObjectDto.Floors"/>.</summary>
+    [JsonPropertyName("index")]
+    public int? Index { get; set; }
+
     [JsonPropertyName("name")]
     public string? Name { get; set; }
 
@@ -51,7 +61,15 @@ public sealed class FloorTypeDto
     [JsonPropertyName("color")]
     public string? Color { get; set; }
 
-    /// <summary>Optional per-type polygon data (same shape as UserObject.PolygonPoints).</summary>
+    /// <summary>Per-type wall polygon data. Same shape as UserObject.PolygonPoints.</summary>
     [JsonPropertyName("walls")]
     public JsonElement Walls { get; set; }
+
+    /// <summary>Per-type floor-slab polygon data. Same shape as UserObject.PolygonPoints.</summary>
+    [JsonPropertyName("floor")]
+    public JsonElement Floor { get; set; }
+
+    /// <summary>Per-type ceiling polygon data. Same shape as UserObject.PolygonPoints.</summary>
+    [JsonPropertyName("ceiling")]
+    public JsonElement Ceiling { get; set; }
 }

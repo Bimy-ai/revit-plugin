@@ -63,6 +63,21 @@ if [[ ! -f "${DLL}" || ! -f "${ADDIN}" ]]; then
     exit 1
 fi
 
+# --- Remove the exe-installer version so Revit doesn't load two copies. ---
+# The exe installer writes %ProgramData%\Autodesk\Revit\Addins\<year>\BIMy.addin,
+# which references the Program Files DLL. If left in place alongside the dev
+# install, Revit loads both and trips on duplicate ClientIds.
+PROGDATA="${PROGRAMDATA:-C:/ProgramData}"
+EXE_ADDIN="${PROGDATA}/Autodesk/Revit/Addins/${YEAR}/BIMy.addin"
+if [[ -f "${EXE_ADDIN}" ]]; then
+    echo ">>> Removing exe-installed addin: ${EXE_ADDIN}"
+    if ! rm -f "${EXE_ADDIN}" 2>/dev/null; then
+        echo "WARNING: Could not remove ${EXE_ADDIN} (permission denied)."
+        echo "         Uninstall 'BIMy for Revit' via Windows 'Add/Remove Programs'"
+        echo "         or re-run this script from an elevated shell."
+    fi
+fi
+
 # --- Install. ---
 DEST="${APPDATA}/Autodesk/Revit/Addins/${YEAR}"
 mkdir -p "${DEST}"

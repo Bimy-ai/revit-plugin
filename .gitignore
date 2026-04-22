@@ -39,6 +39,20 @@ Desktop.ini
 # ─── Plugin runtime state (written next to the DLL, usually not in-tree) ─────
 RevitWallsPlugin.log
 RevitWallsPlugin.lasturl.txt
+RevitWallsPlugin.session.json
+RevitWallsPlugin.lastProjectId.*.txt
+*.log
+
+# ─── .NET publish / test output ──────────────────────────────────────────────
+publish/
+TestResults/
+*.coverage
+coverage/
+
+# ─── Installer build output (Inno Setup) ─────────────────────────────────────
+installer/Output/
+*.msi
+Setup.exe
 
 # ─── Ad-hoc scratch files ────────────────────────────────────────────────────
 _export_inspect.json

@@ -36,6 +36,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- ProtectedData (DPAPI). Already shipped in the .NET 8 WindowsDesktop runtime that Revit hosts,
+         so no DLL is copied to the output - the package reference exists for compile-time resolution. -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Update="RevitWallsPlugin.addin">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
