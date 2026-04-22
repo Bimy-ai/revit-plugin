@@ -133,7 +133,9 @@ internal static class RevitLookup
 
     // Make sure exactly one floor-plan view exists for the level and is named
     // "Plan - <levelName>". Any existing floor plans for this level get renamed;
-    // if there are none, one is created from the given ViewFamilyType.
+    // if there are none, one is created from the given ViewFamilyType. Crop box
+    // is switched off so imported buildings that extend past the template's
+    // default crop region stay visible.
     private static void EnsureFloorPlan(Document doc, Level level, ViewFamilyType? floorPlanType)
     {
         var existing = new FilteredElementCollector(doc)
@@ -146,7 +148,10 @@ internal static class RevitLookup
             .ToList();
 
         foreach (var plan in existing)
+        {
             TryRenameView(plan, $"Plan - {level.Name}");
+            DisableCrop(plan);
+        }
 
         if (existing.Count > 0 || floorPlanType is null) return;
 
@@ -154,6 +159,7 @@ internal static class RevitLookup
         {
             var plan = ViewPlan.Create(doc, floorPlanType.Id, level.Id);
             TryRenameView(plan, $"Plan - {level.Name}");
+            DisableCrop(plan);
         }
         catch { /* non-fatal */ }
     }
@@ -171,7 +177,10 @@ internal static class RevitLookup
             .ToList();
 
         foreach (var plan in existing)
+        {
             TryRenameView(plan, $"Ceiling Plan - {level.Name}");
+            DisableCrop(plan);
+        }
 
         if (existing.Count > 0 || ceilingPlanType is null) return;
 
@@ -179,8 +188,37 @@ internal static class RevitLookup
         {
             var plan = ViewPlan.Create(doc, ceilingPlanType.Id, level.Id);
             TryRenameView(plan, $"Ceiling Plan - {level.Name}");
+            DisableCrop(plan);
         }
         catch { /* non-fatal */ }
+    }
+
+    private static void DisableCrop(ViewPlan plan)
+    {
+        try { plan.CropBoxActive = false; } catch { /* non-fatal */ }
+    }
+
+    /// <summary>
+    /// Turns off the section box on every non-template 3D view so imported
+    /// geometry that lands outside the template's default box stays visible.
+    /// The box geometry is preserved — users can flip <c>IsSectionBoxActive</c>
+    /// back on if they want to re-use it.
+    /// </summary>
+    public static int DisableAll3DSectionBoxes(Document doc)
+    {
+        var count = 0;
+        foreach (var v3d in new FilteredElementCollector(doc).OfClass(typeof(View3D)).Cast<View3D>())
+        {
+            if (v3d.IsTemplate) continue;
+            try
+            {
+                if (!v3d.IsSectionBoxActive) continue;
+                v3d.IsSectionBoxActive = false;
+                count++;
+            }
+            catch { /* non-fatal */ }
+        }
+        return count;
     }
 
     private static ViewFamilyType? FindViewFamilyType(Document doc, ViewFamily family)

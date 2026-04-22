@@ -71,8 +71,9 @@ internal static class ImportRunner
 
                 summary = BuildAll(doc, project, importTag);
 
-                UncropNewlyCreatedPlans(doc, summary.CreatedLevels);
-                DisableActiveCrop(doc);
+                var disabledBoxes = RevitLookup.DisableAll3DSectionBoxes(doc);
+                if (disabledBoxes > 0)
+                    Log.Info($"Disabled section box on {disabledBoxes} 3D view(s).");
 
                 tx.Commit();
 
@@ -216,40 +217,6 @@ internal static class ImportRunner
         catch (Exception ex)
         {
             Log.Warn($"Could not park active view: {ex.Message}");
-        }
-    }
-
-    private static void DisableActiveCrop(Document doc)
-    {
-        if (doc.ActiveView is ViewPlan plan && plan.CropBoxActive)
-        {
-            try
-            {
-                plan.CropBoxActive = false;
-                Log.Info($"Disabled crop box on active view '{plan.Name}'.");
-            }
-            catch (Exception ex)
-            {
-                Log.Warn($"Could not disable crop box: {ex.Message}");
-            }
-        }
-    }
-
-    /// <summary>
-    /// Newly-created floor plans default to crop-on, which hides walls that
-    /// sit outside the tiny auto-generated crop region. Un-crop them so the
-    /// imported geometry is visible the first time the user opens the plan.
-    /// </summary>
-    private static void UncropNewlyCreatedPlans(Document doc, HashSet<string> createdLevelNames)
-    {
-        if (createdLevelNames.Count == 0) return;
-
-        foreach (var plan in new FilteredElementCollector(doc).OfClass(typeof(ViewPlan)).Cast<ViewPlan>())
-        {
-            if (plan.IsTemplate) continue;
-            if (plan.GenLevel is null) continue;
-            if (!createdLevelNames.Contains(plan.GenLevel.Name)) continue;
-            try { plan.CropBoxActive = false; } catch { /* non-fatal */ }
         }
     }
 
