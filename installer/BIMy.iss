@@ -1,27 +1,52 @@
-; Inno Setup script — produces a Setup.exe installer for the BIMy Revit add-in.
-; Build by running installer\build-installer.cmd (requires Inno Setup 6 installed).
+; Inno Setup script — produces a Setup.exe that deploys the BIMy add-in into
+; Revit's canonical Addins folder. Build by running installer\build-installer.cmd
+; (requires Inno Setup 6 installed).
+;
+; How this installer works (and why it "just works" for any Revit install):
+;
+;   1. No traditional "app directory" in Program Files. The plugin ships
+;      directly into Revit's own Addins folder, which is the location Revit
+;      scans on startup. No registry, no environment variables, no PATH.
+;
+;   2. Bundled deployment pattern (recommended by Autodesk):
+;           ...\Addins\<year>\BIMy\RevitWallsPlugin.dll       <- payload
+;           ...\Addins\<year>\BIMy.addin                      <- manifest
+;      The .addin references the DLL with a RELATIVE path
+;      (<Assembly>BIMy\RevitWallsPlugin.dll</Assembly>), so the layout is
+;      self-contained and can be moved or copied without edits.
+;
+;   3. Installs per-user by default (%AppData%\Autodesk\Revit\Addins\<year>).
+;      This requires no admin, no UAC, and won't fight antivirus tools that
+;      flag writes to Program Files. If the user runs the installer elevated,
+;      it also writes the machine-wide copy (%ProgramData%\...) so every
+;      Windows account on the box picks the plugin up.
+;
+;   4. Revit versions are auto-detected by looking for Revit.exe under
+;      C:\Program Files\Autodesk\Revit <year>\. Years 2022..2030 are probed
+;      so the same Setup.exe keeps working as new Revit versions ship.
 
-; ─── CONFIGURE PUBLISHER INFO ─────────────────────────────────────────────────
-; Update these before first release, then leave AppId alone forever (changing it
+; ─── PUBLISHER INFO ───────────────────────────────────────────────────────────
+; Update these before first release, then leave AppId alone (changing AppId
 ; breaks upgrades — new AppId installs side-by-side instead of replacing).
 
 #define AppId          "{7E6A1F4B-9C2D-4A3E-B5F1-2D8C4E6A9B10}"
 #define AppName        "BIMy for Revit"
 #define AppVersion     "1.0.0"
-#define AppPublisher   "Your Company Name"
-#define AppURL         "https://example.com"
-#define AppSupportURL  "https://example.com/support"
-#define AppUpdatesURL  "https://example.com/downloads"
-#define AppContact     "support@example.com"
-#define AppCopyright   "Copyright (C) 2026 Your Company Name"
+#define AppPublisher   "BIMy.ai"
+#define AppURL         "https://bimy.ai"
+#define AppSupportURL  "https://bimy.ai/support"
+#define AppUpdatesURL  "https://bimy.ai/downloads"
+#define AppContact     "support@bimy.ai"
+#define AppCopyright   "Copyright (C) 2026 BIMy.ai"
 
-; Revit versions to register the add-in for. Drop entries if you don't want to
-; support a particular year.
-#define RevitYears     "2025,2026"
-
-; Paths (relative to this .iss file)
+; Paths relative to this .iss file.
 #define SrcBin         "..\bin\Release"
 #define AddinTemplate  "BIMy.addin.template"
+
+; Name of the plugin's subfolder inside <Addins>\<year>\. Must match the
+; <Assembly> path prefix in BIMy.addin.template.
+#define PluginFolder   "BIMy"
+#define AddinFileName  "BIMy.addin"
 
 [Setup]
 AppId={{#AppId}}
@@ -40,17 +65,34 @@ VersionInfoDescription={#AppName} Setup
 VersionInfoProductName={#AppName}
 VersionInfoCopyright={#AppCopyright}
 
-DefaultDirName={autopf}\{#AppPublisher}\{#AppName}
-DefaultGroupName={#AppName}
+; No dedicated install directory — files land directly in the Revit Addins
+; folder(s). We still need an {app} so the uninstaller can register itself,
+; but nothing user-visible lives there; keep it tidy in %LocalAppData%.
+DefaultDirName={localappdata}\Programs\{#AppPublisher}\{#AppName}
+DisableDirPage=yes
 DisableProgramGroupPage=yes
-DisableDirPage=auto
+CreateAppDir=yes
 UninstallDisplayName={#AppName}
-UninstallDisplayIcon={app}\RevitWallsPlugin.dll
 
-ArchitecturesAllowed=x64
-ArchitecturesInstallIn64BitMode=x64
-PrivilegesRequired=admin
-MinVersion=10.0
+; Per-user install by default — no admin prompt. Users who double-click the
+; Setup.exe just get a Revit-local install. If they Right-click → "Run as
+; administrator", the installer also writes the machine-wide copy (handled
+; in [Code] via IsAdminInstallMode).
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog
+
+; x64compatible = native x64 + ARM64-Windows-running-x64-via-emulation. This
+; is the most permissive identifier that still excludes 32-bit-only machines
+; (which can't host Revit anyway). Plain "x64" gets substituted to "x64os" on
+; Inno Setup 6.3+, which wrongly rejects ARM64 Windows with the unhelpful
+; "This program does not support the version of Windows your computer is
+; running" dialog.
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+; No MinVersion — Inno Setup 6's own lower bound already excludes anything
+; Revit 2025 wouldn't install on. Leaving it out means the "No Revit detected"
+; message handles unsupported Windows versions gracefully instead of Setup
+; aborting with a confusing generic error.
 
 OutputDir=Output
 OutputBaseFilename=BIMy-for-Revit-Setup-{#AppVersion}
@@ -58,8 +100,8 @@ Compression=lzma2/ultra
 SolidCompression=yes
 WizardStyle=modern
 
-; Uncomment and configure once you have a code-signing certificate.
-; Without a signed installer, SmartScreen will warn users on first run.
+; Uncomment and configure once you have a code-signing certificate. Without a
+; signed installer, SmartScreen will warn users on first launch.
 ; SignTool=signtool
 ; SignedUninstaller=yes
 
@@ -67,51 +109,68 @@ WizardStyle=modern
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "{#SrcBin}\RevitWallsPlugin.dll";       DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SrcBin}\RevitWallsPlugin.deps.json"; DestDir: "{app}"; Flags: ignoreversion
-; PDB is optional — ship it for better crash diagnostics; remove this line to slim the installer.
-Source: "{#SrcBin}\RevitWallsPlugin.pdb";       DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-; Ship the template so [Code] can read and rewrite it during install.
-Source: "{#AddinTemplate}";                     DestDir: "{tmp}"; Flags: deleteafterinstall
-
-[UninstallDelete]
-; Remove the per-version .addin manifests that were generated at install time.
-Type: files; Name: "{commonappdata}\Autodesk\Revit\Addins\2025\BIMy.addin"
-Type: files; Name: "{commonappdata}\Autodesk\Revit\Addins\2026\BIMy.addin"
+; Stage everything into {tmp}\payload — [Code] copies it into each detected
+; Revit year's Addins folder at the ssPostInstall step. Using DeleteAfterInstall
+; keeps the {app} folder tiny (just the uninstaller).
+Source: "{#SrcBin}\RevitWallsPlugin.dll";       DestDir: "{tmp}\payload"; Flags: deleteafterinstall
+Source: "{#SrcBin}\RevitWallsPlugin.deps.json"; DestDir: "{tmp}\payload"; Flags: deleteafterinstall
+Source: "{#SrcBin}\RevitWallsPlugin.pdb";       DestDir: "{tmp}\payload"; Flags: deleteafterinstall skipifsourcedoesntexist
+Source: "{#AddinTemplate}";                     DestDir: "{tmp}";         Flags: deleteafterinstall
 
 [Code]
 const
-  TemplatePlaceholder = '__ASSEMBLY_PATH__';
+  // Probe this inclusive range for installed Revit versions. Bump the upper
+  // bound when new Revit years ship — no other code changes needed.
+  FirstRevitYear = 2022;
+  LastRevitYear  = 2030;
 
-function SplitYears(const Raw: string): TArrayOfString;
-var
-  S, Piece: string;
-  P: Integer;
-  Count: Integer;
+// Files and folders we drop in each <Addins>\<year>. Kept in one place so the
+// uninstaller can find and remove them symmetrically.
+function AddinFile(): string;     begin Result := '{#AddinFileName}'; end;
+function PluginFolderName(): string; begin Result := '{#PluginFolder}'; end;
+
+// Revit year is "installed" if Revit.exe exists under its canonical Program
+// Files location. Registry keys move around between Revit releases, so this
+// file-based probe is the most stable signal.
+function RevitYearInstalled(const Year: string): Boolean;
 begin
-  S := Raw;
+  Result := FileExists(ExpandConstant('{pf}') + '\Autodesk\Revit ' + Year + '\Revit.exe');
+end;
+
+function DetectInstalledRevitYears(): TArrayOfString;
+var
+  I, Count: Integer;
+  YearStr: string;
+begin
   Count := 0;
   SetArrayLength(Result, 0);
-  while Length(S) > 0 do
+  for I := FirstRevitYear to LastRevitYear do
   begin
-    P := Pos(',', S);
-    if P = 0 then
-    begin
-      Piece := Trim(S);
-      S := '';
-    end
-    else
-    begin
-      Piece := Trim(Copy(S, 1, P - 1));
-      S := Copy(S, P + 1, Length(S));
-    end;
-    if Length(Piece) > 0 then
+    YearStr := IntToStr(I);
+    if RevitYearInstalled(YearStr) then
     begin
       SetArrayLength(Result, Count + 1);
-      Result[Count] := Piece;
+      Result[Count] := YearStr;
       Count := Count + 1;
     end;
   end;
+end;
+
+function UserAddinsRoot(): string;
+begin
+  Result := ExpandConstant('{userappdata}') + '\Autodesk\Revit\Addins';
+end;
+
+function MachineAddinsRoot(): string;
+begin
+  Result := ExpandConstant('{commonappdata}') + '\Autodesk\Revit\Addins';
+end;
+
+// Returns True if installer is running elevated (admin). Revit's machine-wide
+// Addins folder under %ProgramData% requires admin to write to.
+function CanWriteMachineAddins(): Boolean;
+begin
+  Result := IsAdminInstallMode();
 end;
 
 function IsRevitRunning(): Boolean;
@@ -119,8 +178,9 @@ var
   ResultCode: Integer;
 begin
   Result := False;
-  // Exits 0 if Revit.exe is running, 1 otherwise.
-  if Exec(ExpandConstant('{cmd}'), '/C tasklist /FI "IMAGENAME eq Revit.exe" | find /I "Revit.exe" >nul',
+  // tasklist /FI ... then `find` — exit 0 means a match, 1 means no match.
+  if Exec(ExpandConstant('{cmd}'),
+          '/C tasklist /FI "IMAGENAME eq Revit.exe" | find /I "Revit.exe" >nul',
           '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     Result := (ResultCode = 0);
 end;
@@ -128,57 +188,200 @@ end;
 function InitializeSetup(): Boolean;
 begin
   Result := True;
+
+  // No Revit on this machine → nothing for us to install. Bail out BEFORE the
+  // uninstaller entry gets registered (which would happen once CurStepChanged
+  // fires), so the user isn't left with a ghost "BIMy for Revit" entry in
+  // Add/Remove Programs.
+  if GetArrayLength(DetectInstalledRevitYears()) = 0 then
+  begin
+    MsgBox('No Revit installations were detected on this machine ' +
+           '(looked for C:\Program Files\Autodesk\Revit <year>\Revit.exe for years ' +
+           IntToStr(FirstRevitYear) + '–' + IntToStr(LastRevitYear) + ').' + #13#10 + #13#10 +
+           'Install Revit first, then re-run this Setup.',
+           mbInformation, MB_OK);
+    Result := False;
+    Exit;
+  end;
+
   if IsRevitRunning() then
   begin
-    if MsgBox('Revit is currently running. Please close Revit before continuing — otherwise the add-in files may be locked.' + #13#10 + #13#10 +
+    if MsgBox('Revit is currently running. Please close Revit before continuing — otherwise the add-in files may be locked and the install can fail silently.' + #13#10 + #13#10 +
               'Continue anyway?', mbConfirmation, MB_YESNO) = IDNO then
       Result := False;
   end;
 end;
 
-procedure WriteAddinForYear(const Year, Template: string);
+// Copy every staged file into <destBase>\<PluginFolder>\. Returns True on
+// success, False on the first failure (so we can log a clear message).
+function CopyPayloadInto(const DestBase: string): Boolean;
 var
-  Content, AssemblyPath, AddinDir, AddinPath: string;
+  Src, Dst: string;
 begin
-  AssemblyPath := ExpandConstant('{app}') + '\RevitWallsPlugin.dll';
-  AddinDir := ExpandConstant('{commonappdata}') + '\Autodesk\Revit\Addins\' + Year;
-  AddinPath := AddinDir + '\BIMy.addin';
+  Result := False;
+  Src := ExpandConstant('{tmp}\payload');
+  Dst := DestBase + '\' + PluginFolderName();
 
-  if not DirExists(AddinDir) then
+  if not ForceDirectories(Dst) then Exit;
+
+  if not CopyFile(Src + '\RevitWallsPlugin.dll', Dst + '\RevitWallsPlugin.dll', False) then Exit;
+
+  // deps.json is optional but shipped — ignore failure, the plugin still loads.
+  CopyFile(Src + '\RevitWallsPlugin.deps.json', Dst + '\RevitWallsPlugin.deps.json', False);
+
+  // PDB is optional and best-effort (isn't always present in the bin folder).
+  if FileExists(Src + '\RevitWallsPlugin.pdb') then
+    CopyFile(Src + '\RevitWallsPlugin.pdb', Dst + '\RevitWallsPlugin.pdb', False);
+
+  Result := True;
+end;
+
+// Write <AddinsRoot>\<year>\<BIMy.addin> and copy DLLs into <year>\BIMy\.
+// Returns True on success.
+function DeployToAddinsRoot(const AddinsRoot, Year, ManifestXml: string): Boolean;
+var
+  YearDir, AddinPath: string;
+begin
+  Result := False;
+  YearDir := AddinsRoot + '\' + Year;
+  AddinPath := YearDir + '\' + AddinFile();
+
+  if not ForceDirectories(YearDir) then
   begin
-    if not ForceDirectories(AddinDir) then
-    begin
-      Log('Could not create ' + AddinDir + ' — skipping Revit ' + Year);
-      Exit;
-    end;
+    Log('Could not create ' + YearDir);
+    Exit;
   end;
 
-  Content := Template;
-  StringChangeEx(Content, TemplatePlaceholder, AssemblyPath, True);
+  if not CopyPayloadInto(YearDir) then
+  begin
+    Log('Could not copy payload into ' + YearDir + '\' + PluginFolderName());
+    Exit;
+  end;
 
-  if not SaveStringToFile(AddinPath, Content, False) then
+  if not SaveStringToFile(AddinPath, ManifestXml, False) then
+  begin
     Log('Failed to write ' + AddinPath);
+    Exit;
+  end;
+
+  Log('Installed for Revit ' + Year + ' at ' + AddinPath);
+  Result := True;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  Template: AnsiString;
-  TemplateStr: string;
+  TemplateBytes: AnsiString;
+  ManifestXml: string;
   TemplatePath: string;
   Years: TArrayOfString;
-  I: Integer;
+  Installed: TArrayOfString;
+  Y: string;
+  I, Count: Integer;
+  Summary: string;
 begin
   if CurStep <> ssPostInstall then Exit;
 
-  TemplatePath := ExpandConstant('{tmp}\') + '{#AddinTemplate}';
-  if not LoadStringFromFile(TemplatePath, Template) then
+  TemplatePath := ExpandConstant('{tmp}\{#AddinTemplate}');
+  if not LoadStringFromFile(TemplatePath, TemplateBytes) then
   begin
     MsgBox('Installer error: could not read ' + TemplatePath, mbError, MB_OK);
     Exit;
   end;
-  TemplateStr := String(Template);
+  ManifestXml := String(TemplateBytes);
 
-  Years := SplitYears('{#RevitYears}');
+  // Safe to call — InitializeSetup already rejected empty results, so Years
+  // is guaranteed to have at least one entry here.
+  Years := DetectInstalledRevitYears();
+
+  SetArrayLength(Installed, 0);
+  Count := 0;
+
   for I := 0 to GetArrayLength(Years) - 1 do
-    WriteAddinForYear(Years[I], TemplateStr);
+  begin
+    Y := Years[I];
+
+    // Per-user install always succeeds (no privileges needed).
+    if DeployToAddinsRoot(UserAddinsRoot(), Y, ManifestXml) then
+    begin
+      SetArrayLength(Installed, Count + 1);
+      Installed[Count] := Y + ' (per-user)';
+      Count := Count + 1;
+    end;
+
+    // Machine-wide copy only when running elevated. Revit scans both locations
+    // so this is additive, not a replacement.
+    if CanWriteMachineAddins() then
+    begin
+      if DeployToAddinsRoot(MachineAddinsRoot(), Y, ManifestXml) then
+      begin
+        SetArrayLength(Installed, Count + 1);
+        Installed[Count] := Y + ' (all users)';
+        Count := Count + 1;
+      end;
+    end;
+  end;
+
+  if GetArrayLength(Installed) = 0 then
+  begin
+    MsgBox('Installation failed — could not write the add-in files to any Revit Addins folder. ' +
+           'See the setup log for details.', mbError, MB_OK);
+    Exit;
+  end;
+
+  Summary := '{#AppName} was installed for Revit:' + #13#10#13#10;
+  for I := 0 to GetArrayLength(Installed) - 1 do
+    Summary := Summary + '    • Revit ' + Installed[I] + #13#10;
+  Summary := Summary + #13#10 +
+             'Restart Revit (if it''s open) to see the "BIMy" tab in the ribbon.';
+  if not CanWriteMachineAddins() then
+    Summary := Summary + #13#10#13#10 +
+               'Tip: run this installer as administrator to also install for other Windows accounts on this machine.';
+
+  MsgBox(Summary, mbInformation, MB_OK);
+end;
+
+// ─── Uninstall ────────────────────────────────────────────────────────────────
+// Symmetric cleanup: remove <Addins>\<year>\BIMy.addin and the BIMy\
+// subfolder from both per-user and per-machine locations for every year we
+// might have installed into.
+
+// Refuse to start uninstalling while Revit is running — the DLL is mapped
+// into Revit's process and Windows will deny the delete, leaving an orphaned
+// BIMy\ folder in %AppData%\Autodesk\Revit\Addins\<year>\ with no easy way
+// to clean it up (the uninstaller itself is gone by then).
+function InitializeUninstall(): Boolean;
+begin
+  Result := True;
+  if IsRevitRunning() then
+  begin
+    MsgBox('Revit is currently running. Close Revit first, then run the uninstaller again — otherwise the plugin DLL is locked and won''t be removed cleanly.',
+           mbInformation, MB_OK);
+    Result := False;
+  end;
+end;
+
+procedure RemoveFromAddinsRoot(const AddinsRoot: string);
+var
+  I: Integer;
+  YearDir, AddinPath, PluginDir: string;
+begin
+  for I := FirstRevitYear to LastRevitYear do
+  begin
+    YearDir   := AddinsRoot + '\' + IntToStr(I);
+    AddinPath := YearDir + '\' + AddinFile();
+    PluginDir := YearDir + '\' + PluginFolderName();
+
+    if FileExists(AddinPath) then
+      DeleteFile(AddinPath);
+    if DirExists(PluginDir) then
+      DelTree(PluginDir, True, True, True);
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep <> usUninstall then Exit;
+  RemoveFromAddinsRoot(UserAddinsRoot());
+  if CanWriteMachineAddins() then
+    RemoveFromAddinsRoot(MachineAddinsRoot());
 end;

@@ -2,7 +2,7 @@
 <RevitAddIns>
   <AddIn Type="Application">
     <Name>BIMy</Name>
-    <Assembly>__ASSEMBLY_PATH__</Assembly>
+    <Assembly>BIMy\RevitWallsPlugin.dll</Assembly>
     <FullClassName>RevitWallsPlugin.Commands.BimyApplication</FullClassName>
     <ClientId>6f1c2a3e-9b4d-4d8f-9a0c-2f7e6b3a1d10</ClientId>
     <VendorId>RWPL</VendorId>
@@ -12,7 +12,7 @@
     <Name>BIMy: Set API token</Name>
     <Text>Set BIMy API token…</Text>
     <Description>Set the BIMy API token and pick the environment.</Description>
-    <Assembly>__ASSEMBLY_PATH__</Assembly>
+    <Assembly>BIMy\RevitWallsPlugin.dll</Assembly>
     <FullClassName>RevitWallsPlugin.Commands.SetApiTokenCommand</FullClassName>
     <ClientId>6f1c2a3e-9b4d-4d8f-9a0c-2f7e6b3a1d11</ClientId>
     <VendorId>RWPL</VendorId>
@@ -23,7 +23,7 @@
     <Name>BIMy: Disconnect</Name>
     <Text>Disconnect BIMy</Text>
     <Description>Clear the saved BIMy session.</Description>
-    <Assembly>__ASSEMBLY_PATH__</Assembly>
+    <Assembly>BIMy\RevitWallsPlugin.dll</Assembly>
     <FullClassName>RevitWallsPlugin.Commands.DisconnectCommand</FullClassName>
     <ClientId>6f1c2a3e-9b4d-4d8f-9a0c-2f7e6b3a1d12</ClientId>
     <VendorId>RWPL</VendorId>
@@ -34,7 +34,7 @@
     <Name>BIMy: Load from BIMy</Name>
     <Text>Load from BIMy</Text>
     <Description>Fetch userObjects from a BIMy URL and rebuild walls.</Description>
-    <Assembly>__ASSEMBLY_PATH__</Assembly>
+    <Assembly>BIMy\RevitWallsPlugin.dll</Assembly>
     <FullClassName>RevitWallsPlugin.Commands.LoadFromBimyCommand</FullClassName>
     <ClientId>6f1c2a3e-9b4d-4d8f-9a0c-2f7e6b3a1d13</ClientId>
     <VendorId>RWPL</VendorId>
