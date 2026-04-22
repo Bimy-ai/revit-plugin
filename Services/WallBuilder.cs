@@ -12,7 +12,10 @@ internal static class WallBuilder
         HashSet<string> CreatedWallTypes,
         List<string> Errors);
 
-    public static Result CreateWalls(Document doc, List<WallDto> walls)
+    public static Result CreateWalls(
+        Document doc,
+        List<WallDto> walls,
+        Dictionary<string, double> levelElevationsMm)
     {
         var deleted = DeleteAllWalls(doc);
 
@@ -22,7 +25,7 @@ internal static class WallBuilder
             .Select(n => n.Trim())
             .ToList();
 
-        var (levelByName, createdLevels) = RevitLookup.EnsureLevels(doc, referencedLevels);
+        var (levelByName, createdLevels) = RevitLookup.EnsureLevels(doc, referencedLevels, levelElevationsMm);
         var typeProvider = new WallTypeProvider(doc);
 
         var created = 0;
@@ -67,7 +70,7 @@ internal static class WallBuilder
         if (dto.End   is null || dto.End.Length   < 2) throw new InvalidOperationException("'end' must be [x, y] in mm.");
         if (dto.Height <= 0) throw new InvalidOperationException("'height' must be > 0 mm.");
 
-        var wallType = typeProvider.Get(dto.ColorHex);
+        var wallType = typeProvider.Get(dto.Type, dto.ColorHex);
         var level = RevitLookup.ResolveLevel(levelByName, dto.Level!.Trim());
 
         var start = new XYZ(MmToFeet(dto.Start[0]), MmToFeet(dto.Start[1]), 0);

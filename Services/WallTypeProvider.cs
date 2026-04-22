@@ -18,6 +18,7 @@ internal sealed class WallTypeProvider
     private readonly Document _doc;
     private readonly WallType _baseType;
     private readonly Dictionary<string, WallType> _wallTypeCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _reservedNames = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ElementId> _materialCache = new(StringComparer.OrdinalIgnoreCase);
 
     public HashSet<string> CreatedWallTypes { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -30,38 +31,53 @@ internal sealed class WallTypeProvider
     }
 
     /// <summary>
-    /// Returns the wall type to use for a wall with the given color.
+    /// Returns the wall type to use for a wall of the given floor-type name and color.
+    /// The wall type is displayed in Revit as "RWP &lt;typeName&gt;" (falling back to
+    /// "Generic"); when the same typeName is used with multiple colors, later ones are
+    /// disambiguated with a hex suffix so each color still gets its own wall type.
     /// When <paramref name="colorHex"/> is null/empty, the base wall type is
     /// returned as-is (no duplication, no project mutation).
     /// </summary>
-    public WallType Get(string? colorHex)
+    public WallType Get(string? typeName, string? colorHex)
     {
         if (string.IsNullOrWhiteSpace(colorHex))
             return _baseType;
 
         var hex = NormalizeHex(colorHex!);
-        var typeName = $"RWP {hex}";
+        var displayBase = string.IsNullOrWhiteSpace(typeName) ? "Generic" : typeName!.Trim();
+        var cacheKey = $"{displayBase}|{hex}";
 
-        if (_wallTypeCache.TryGetValue(typeName, out var cached))
+        if (_wallTypeCache.TryGetValue(cacheKey, out var cached))
             return cached;
+
+        var desiredName = $"RWP {displayBase}";
+        if (_reservedNames.TryGetValue(desiredName, out var claimedHex)
+            && !string.Equals(claimedHex, hex, StringComparison.OrdinalIgnoreCase))
+        {
+            desiredName = $"RWP {displayBase} {hex}";
+        }
+        _reservedNames[desiredName] = hex;
 
         var existing = new FilteredElementCollector(_doc)
             .OfClass(typeof(WallType))
             .Cast<WallType>()
-            .FirstOrDefault(wt => string.Equals(wt.Name, typeName, StringComparison.OrdinalIgnoreCase));
+            .FirstOrDefault(wt => string.Equals(wt.Name, desiredName, StringComparison.OrdinalIgnoreCase));
 
+        WallType wallType;
         if (existing is not null)
         {
-            _wallTypeCache[typeName] = existing;
-            return existing;
+            ReplaceStructuralMaterial(existing, EnsureMaterial(hex));
+            wallType = existing;
+        }
+        else
+        {
+            wallType = (WallType)_baseType.Duplicate(desiredName);
+            ReplaceStructuralMaterial(wallType, EnsureMaterial(hex));
+            CreatedWallTypes.Add(desiredName);
         }
 
-        var newType = (WallType)_baseType.Duplicate(typeName);
-        ReplaceStructuralMaterial(newType, EnsureMaterial(hex));
-
-        _wallTypeCache[typeName] = newType;
-        CreatedWallTypes.Add(typeName);
-        return newType;
+        _wallTypeCache[cacheKey] = wallType;
+        return wallType;
     }
 
     private static WallType? FindBaseBasicWallType(Document doc)

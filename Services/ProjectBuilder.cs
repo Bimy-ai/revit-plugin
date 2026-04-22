@@ -13,7 +13,11 @@ namespace RevitWallsPlugin.Services;
 /// </summary>
 internal static class ProjectBuilder
 {
-    public static List<WallDto> BuildWalls(UserObjectsPayload payload)
+    public sealed record Result(
+        List<WallDto> Walls,
+        Dictionary<string, double> LevelElevationsMm);
+
+    public static Result BuildWalls(UserObjectsPayload payload)
     {
         var walls = new List<WallDto>();
         var userObjects = payload.UserObjects ?? new List<UserObjectDto>();
@@ -65,7 +69,46 @@ internal static class ProjectBuilder
         }
 
         CenterInPlace(walls);
-        return walls;
+        var levelElevationsMm = ComputeLevelElevations(userObjects);
+        return new Result(walls, levelElevationsMm);
+    }
+
+    /// <summary>
+    /// Builds a global elevation map (L1, L2, …) by stacking each floor's height.
+    /// When multiple userObjects disagree on a floor's height, the tallest wins so
+    /// walls on that floor fit cleanly under the next level.
+    /// </summary>
+    private static Dictionary<string, double> ComputeLevelElevations(List<UserObjectDto> userObjects)
+    {
+        var maxHeightByFloor = new Dictionary<int, double>();
+
+        foreach (var obj in userObjects)
+        {
+            var floors = (obj.Floors is { Count: > 0 }) ? obj.Floors : new List<int> { 0 };
+            for (var floorIdx = 0; floorIdx < floors.Count; floorIdx++)
+            {
+                var type = PickType(obj.Types, floors[floorIdx]);
+                if (type is null) continue;
+
+                var h = ToMm(type.Height);
+                if (h <= 0) h = 3000;
+
+                if (!maxHeightByFloor.TryGetValue(floorIdx, out var existing) || h > existing)
+                    maxHeightByFloor[floorIdx] = h;
+            }
+        }
+
+        var elevations = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        if (maxHeightByFloor.Count == 0) return elevations;
+
+        var lastFloorIdx = maxHeightByFloor.Keys.Max();
+        double cumulative = 0;
+        for (var i = 0; i <= lastFloorIdx; i++)
+        {
+            elevations[$"L{i + 1}"] = cumulative;
+            cumulative += maxHeightByFloor.TryGetValue(i, out var h) ? h : 3000;
+        }
+        return elevations;
     }
 
     // ── Unit conversion ──────────────────────────────────────────────────────

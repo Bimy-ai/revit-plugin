@@ -22,14 +22,14 @@ internal static class ImportRunner
 
         Log.Info($"Fetching JSON from: {url}");
         UserObjectsPayload payload;
-        List<WallDto> walls;
+        ProjectBuilder.Result project;
         try
         {
             payload = JsonFetcher.FetchAsync<UserObjectsPayload>(url).GetAwaiter().GetResult();
             var objectCount = payload.UserObjects?.Count ?? 0;
             Log.Info($"Fetched {objectCount} userObject(s).");
-            walls = ProjectBuilder.BuildWalls(payload);
-            Log.Info($"Built {walls.Count} wall definition(s) from {objectCount} userObject(s).");
+            project = ProjectBuilder.BuildWalls(payload);
+            Log.Info($"Built {project.Walls.Count} wall definition(s) across {project.LevelElevationsMm.Count} level(s) from {objectCount} userObject(s).");
         }
         catch (Exception ex)
         {
@@ -54,7 +54,7 @@ internal static class ImportRunner
                 tx.SetFailureHandlingOptions(opts);
 
                 Log.Info("Creating walls…");
-                buildResult = WallBuilder.CreateWalls(doc, walls);
+                buildResult = WallBuilder.CreateWalls(doc, project.Walls, project.LevelElevationsMm);
                 Log.Info($"Build pass finished. Created(in-memory)={buildResult.Created}, Skipped={buildResult.Errors.Count}. Committing…");
 
                 DisableActiveCrop(doc);
@@ -84,7 +84,7 @@ internal static class ImportRunner
 
         ZoomOpenViewsToFit(uiDoc);
 
-        ShowSummary(buildResult, walls.Count, url);
+        ShowSummary(buildResult, project.Walls.Count, url);
         return Result.Succeeded;
     }
 
