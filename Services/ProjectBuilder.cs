@@ -9,19 +9,18 @@ namespace RevitWallsPlugin.Services;
 /// ready for Revit element creation.
 ///
 /// <para>
-/// Consecutive stories that resolve to the same <see cref="FloorTypeDto.Id"/>
-/// are coalesced into a single spanning wall per edge: one Revit wall instance
-/// replaces what would otherwise be N stacked walls. Floors and ceilings are
-/// still emitted per story, but share a type with every other story of the
-/// same id — editing that type updates every instance.
+/// Walls, floors, and ceilings are all emitted per story — one Revit element
+/// per (story × edge or polygon). Stacked stories of the same type share a
+/// Revit wall / floor / ceiling type, so editing the type updates every
+/// instance, but each story keeps its own instance for per-level editing.
 /// </para>
 /// <para>
 /// Normalizes polygon winding (walls: outer CW, holes CCW to land the exterior
 /// face on the correct side with flip=false), merges collinear points, drops
-/// sub-mm edges, and dedupes edges shared between polygons of the same
+/// sub-mm edges, and dedupes edges shared between polygons on the same
 /// (baseLevel, topLevel, type, thickness, color). Produces an elevation map
-/// that includes one extra "roof" level above the top story so spanning walls
-/// always have a valid top constraint.
+/// that includes one extra "roof" level above the top story so the top story's
+/// walls always have a valid top constraint.
 /// </para>
 /// </summary>
 internal static class ProjectBuilder
@@ -50,11 +49,12 @@ internal static class ProjectBuilder
         {
             var storyAssignments = ResolveStoryAssignments(obj, storyCount);
 
-            // Group consecutive stories with the same type identity into runs so
-            // we can emit one spanning wall per edge instead of N stacked walls.
-            foreach (var run in CoalesceRuns(storyAssignments))
+            // One wall-run per story — keep every level's walls as their own
+            // Revit instances so users can edit, delete, or host elements on
+            // them independently.
+            foreach (var a in storyAssignments)
             {
-                EmitRun(obj, run, walls, floors, ceilings);
+                EmitRun(obj, new Run(a.StoryIndex, a.StoryIndex, a.Type), walls, floors, ceilings);
             }
         }
 
@@ -102,44 +102,6 @@ internal static class ProjectBuilder
             assignments.Add(new StoryAssignment(storyIdx, type));
         }
         return assignments;
-    }
-
-    private static IEnumerable<Run> CoalesceRuns(List<StoryAssignment> assignments)
-    {
-        if (assignments.Count == 0) yield break;
-
-        var start = 0;
-        while (start < assignments.Count)
-        {
-            var end = start;
-            var startKey = TypeKey(assignments[start].Type);
-            while (end + 1 < assignments.Count
-                   && assignments[end + 1].StoryIndex == assignments[end].StoryIndex + 1
-                   && TypeKey(assignments[end + 1].Type) == startKey)
-            {
-                end++;
-            }
-
-            yield return new Run(
-                assignments[start].StoryIndex,
-                assignments[end].StoryIndex,
-                assignments[start].Type);
-
-            start = end + 1;
-        }
-    }
-
-    private static string TypeKey(FloorTypeDto type)
-    {
-        if (!string.IsNullOrWhiteSpace(type.Id)) return "id:" + type.Id;
-        // Fall back to a value-based key so look-alike types without an id still merge.
-        return string.Format(
-            System.Globalization.CultureInfo.InvariantCulture,
-            "n:{0}|h:{1:0.###}|t:{2:0.###}|c:{3}",
-            type.Name ?? "",
-            type.Height ?? 0,
-            type.Thickness ?? 0,
-            type.Color ?? "");
     }
 
     // ── Emit one run (walls + per-story floors/ceilings) ─────────────────────
