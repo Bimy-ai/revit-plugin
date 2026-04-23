@@ -55,7 +55,7 @@ internal static class WallBuilder
         if (dto.End is null || dto.End.Length < 2) throw new InvalidOperationException("'end' must be [x, y] in mm.");
         if (dto.Height <= 0) throw new InvalidOperationException("'height' must be > 0 mm.");
 
-        var wallType = typeProvider.Get(dto.TypeId, dto.Type, dto.ThicknessMm, dto.ColorHex);
+        var wallType = typeProvider.Get();
         var level = RevitLookup.ResolveLevel(levelByName, dto.Level!.Trim());
         Level? explicitTop = null;
         if (!string.IsNullOrWhiteSpace(dto.TopLevel)

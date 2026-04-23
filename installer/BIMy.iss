@@ -74,6 +74,19 @@ DisableProgramGroupPage=yes
 CreateAppDir=yes
 UninstallDisplayName={#AppName}
 
+; Setup.exe file icon (what users see in Explorer / downloads folder) and the
+; Add/Remove Programs icon are both driven by bimy-logo.ico. The ICO is
+; generated from Resources\bimy-logo.png by Resources\generate-ico.ps1 —
+; re-run that script whenever the brand PNG changes.
+SetupIconFile=..\Resources\bimy-logo.ico
+UninstallDisplayIcon={app}\bimy-logo.ico
+
+; Start Menu group name. Inno Setup puts the [Icons] entries below under
+; <user Start Menu>\Programs\<AppName>, so non-technical users can open Start,
+; type "BIMy", and see "Uninstall BIMy for Revit" without needing to know
+; about Control Panel / Add-Remove Programs.
+DefaultGroupName={#AppName}
+
 ; Per-user install by default — no admin prompt. Users who double-click the
 ; Setup.exe just get a Revit-local install. If they Right-click → "Run as
 ; administrator", the installer also writes the machine-wide copy (handled
@@ -108,6 +121,12 @@ WizardStyle=modern
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[Icons]
+; One Start Menu entry — just the uninstaller. The plugin itself has no
+; user-launchable EXE (it runs inside Revit), so we don't need a "Launch BIMy"
+; shortcut; only an easy path to uninstall.
+Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
+
 [Files]
 ; Stage everything into {tmp}\payload — [Code] copies it into each detected
 ; Revit year's Addins folder at the ssPostInstall step. Using DeleteAfterInstall
@@ -116,6 +135,11 @@ Source: "{#SrcBin}\RevitWallsPlugin.dll";       DestDir: "{tmp}\payload"; Flags:
 Source: "{#SrcBin}\RevitWallsPlugin.deps.json"; DestDir: "{tmp}\payload"; Flags: deleteafterinstall
 Source: "{#SrcBin}\RevitWallsPlugin.pdb";       DestDir: "{tmp}\payload"; Flags: deleteafterinstall skipifsourcedoesntexist
 Source: "{#AddinTemplate}";                     DestDir: "{tmp}";         Flags: deleteafterinstall
+
+; Logo icon file ships to {app} so the UninstallDisplayIcon path resolves.
+; Without this, Windows shows a generic icon in Add/Remove Programs even
+; though Setup.exe itself looks correct.
+Source: "..\Resources\bimy-logo.ico";           DestDir: "{app}"; Flags: ignoreversion
 
 [Code]
 const

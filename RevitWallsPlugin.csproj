@@ -47,4 +47,13 @@
     </None>
   </ItemGroup>
 
+  <!-- Ribbon icon. Single PNG source embedded into the DLL (read back at
+       runtime via Assembly.GetManifestResourceStream) and reused for both the
+       large and small ribbon slots — Revit scales the bitmap for the 16×16
+       slot. Replace Resources\bimy-logo.png to change the ribbon logo; also
+       re-run Resources\generate-ico.ps1 to keep the installer icon in sync. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\bimy-logo.png" />
+  </ItemGroup>
+
 </Project>

@@ -1,4 +1,15 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!--
+  Only the Application entry is registered. BIMy commands (SetApiToken /
+  Disconnect / LoadFromBimy) are surfaced exclusively through the BIMy ribbon
+  pulldown built in BimyApplication.OnStartup; registering them here as
+  <AddIn Type="Command"> would duplicate every item under Add-Ins → External
+  Tools, which is what PM saw.
+
+  Revit resolves each ribbon PushButton's class via the (assemblyPath,
+  FullClassName) pair at click time, so commands do NOT need to be declared
+  in this manifest for the ribbon to function.
+-->
 <RevitAddIns>
   <AddIn Type="Application">
     <Name>BIMy</Name>
@@ -7,38 +18,5 @@
     <ClientId>6f1c2a3e-9b4d-4d8f-9a0c-2f7e6b3a1d10</ClientId>
     <VendorId>RWPL</VendorId>
     <VendorDescription>RevitWallsPlugin BIMy add-in</VendorDescription>
-  </AddIn>
-  <AddIn Type="Command">
-    <Name>BIMy: Set API token</Name>
-    <Text>Set BIMy API token…</Text>
-    <Description>Set the BIMy API token and pick the environment.</Description>
-    <Assembly>RevitWallsPlugin.dll</Assembly>
-    <FullClassName>RevitWallsPlugin.Commands.SetApiTokenCommand</FullClassName>
-    <ClientId>6f1c2a3e-9b4d-4d8f-9a0c-2f7e6b3a1d11</ClientId>
-    <VendorId>RWPL</VendorId>
-    <VendorDescription>RevitWallsPlugin BIMy add-in</VendorDescription>
-    <VisibilityMode>AlwaysVisible</VisibilityMode>
-  </AddIn>
-  <AddIn Type="Command">
-    <Name>BIMy: Disconnect</Name>
-    <Text>Disconnect BIMy</Text>
-    <Description>Clear the saved BIMy session.</Description>
-    <Assembly>RevitWallsPlugin.dll</Assembly>
-    <FullClassName>RevitWallsPlugin.Commands.DisconnectCommand</FullClassName>
-    <ClientId>6f1c2a3e-9b4d-4d8f-9a0c-2f7e6b3a1d12</ClientId>
-    <VendorId>RWPL</VendorId>
-    <VendorDescription>RevitWallsPlugin BIMy add-in</VendorDescription>
-    <VisibilityMode>AlwaysVisible</VisibilityMode>
-  </AddIn>
-  <AddIn Type="Command">
-    <Name>BIMy: Load from BIMy</Name>
-    <Text>Load from BIMy</Text>
-    <Description>Fetch userObjects from a BIMy URL and rebuild walls.</Description>
-    <Assembly>RevitWallsPlugin.dll</Assembly>
-    <FullClassName>RevitWallsPlugin.Commands.LoadFromBimyCommand</FullClassName>
-    <ClientId>6f1c2a3e-9b4d-4d8f-9a0c-2f7e6b3a1d13</ClientId>
-    <VendorId>RWPL</VendorId>
-    <VendorDescription>RevitWallsPlugin BIMy add-in</VendorDescription>
-    <VisibilityMode>AlwaysVisible</VisibilityMode>
   </AddIn>
 </RevitAddIns>

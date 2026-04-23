@@ -47,7 +47,7 @@ internal static class CeilingBuilder
         if (string.IsNullOrWhiteSpace(dto.Level)) throw new InvalidOperationException("Missing 'level'.");
         if (dto.Outer is null || dto.Outer.Length < 3) throw new InvalidOperationException("Outer ring needs ≥ 3 points.");
 
-        var ceilingType = typeProvider.Get(dto.TypeId, dto.Type, dto.ThicknessMm, dto.ColorHex);
+        var ceilingType = typeProvider.Get();
         var level = RevitLookup.ResolveLevel(levelByName, dto.Level!.Trim());
 
         var loops = SlabGeometry.BuildCurveLoops(dto.Outer, dto.Holes);

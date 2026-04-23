@@ -47,7 +47,7 @@ internal static class FloorBuilder
         if (string.IsNullOrWhiteSpace(dto.Level)) throw new InvalidOperationException("Missing 'level'.");
         if (dto.Outer is null || dto.Outer.Length < 3) throw new InvalidOperationException("Outer ring needs ≥ 3 points.");
 
-        var floorType = typeProvider.Get(dto.TypeId, dto.Type, dto.ThicknessMm, dto.ColorHex);
+        var floorType = typeProvider.Get();
         var level = RevitLookup.ResolveLevel(levelByName, dto.Level!.Trim());
 
         var loops = SlabGeometry.BuildCurveLoops(dto.Outer, dto.Holes);

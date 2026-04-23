@@ -3,99 +3,49 @@ using Autodesk.Revit.DB;
 namespace RevitWallsPlugin.Services;
 
 /// <summary>
-/// Central cache/factory for the "BIMy {hex}" materials that walls, floors,
-/// and ceilings all share. Every importable color resolves to exactly one
-/// Revit <see cref="Material"/>, so two elements of the same color display
-/// consistently and a single recolor touches every instance at once.
+/// Resolves a single default material that every imported wall, floor, and
+/// ceiling shares. Previously we created one Revit <see cref="Material"/> per
+/// source color (e.g. "BIMy #7ec60f") and painted it with that color, but PM
+/// feedback is to stop coloring imports — BIMy type colors are an authoring
+/// concern, not a BIM concern. Eventually the import will map BIMy types to
+/// real Revit materials (concrete, drywall, etc.); until then we route every
+/// layer through a neutral default.
 /// Must be used inside an open transaction.
 /// </summary>
 internal sealed class ImportMaterialProvider
 {
-    public const string ImportedTag = WallTypeProvider.ImportedTag;
-
-    private readonly Document _doc;
-    private readonly Dictionary<string, ElementId> _cache = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ElementId _solidFillPatternId;
+    private readonly ElementId _defaultMaterialId;
 
     public ImportMaterialProvider(Document doc)
     {
-        _doc = doc;
-        _solidFillPatternId = FindSolidFillPatternId(doc);
-        PrepopulateCache();
+        _defaultMaterialId = ResolveDefaultMaterialId(doc);
     }
 
-    public ElementId EnsureMaterial(string? hex)
+    /// <summary>
+    /// Single material id used for every imported element's layer. May be
+    /// <see cref="ElementId.InvalidElementId"/> — Revit treats that as
+    /// "&lt;By Category&gt;", which still renders as a sensible neutral.
+    /// </summary>
+    public ElementId DefaultMaterialId => _defaultMaterialId;
+
+    // Preference order: the project's own "Default Wall" / "Default" material
+    // if it ships one (most OOTB Revit templates do), then any material named
+    // "Generic". Falling back to InvalidElementId lets Revit use category
+    // defaults rather than surprising the user with an unrelated material.
+    private static ElementId ResolveDefaultMaterialId(Document doc)
     {
-        if (string.IsNullOrWhiteSpace(hex)) return ElementId.InvalidElementId;
-        var normalised = hex!.ToLowerInvariant();
-        if (_cache.TryGetValue(normalised, out var cached)) return cached;
-
-        var name = $"BIMy {normalised}";
-
-        var existing = new FilteredElementCollector(_doc)
+        var materials = new FilteredElementCollector(doc)
             .OfClass(typeof(Material))
             .Cast<Material>()
-            .FirstOrDefault(m => string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase));
+            .ToList();
 
-        ElementId id;
-        if (existing is not null)
+        foreach (var name in new[] { "Default Wall", "Default", "Generic" })
         {
-            id = existing.Id;
-            Paint(existing, normalised);
-        }
-        else
-        {
-            id = Material.Create(_doc, name);
-            if (_doc.GetElement(id) is Material mat) Paint(mat, normalised);
+            var hit = materials.FirstOrDefault(m =>
+                string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (hit is not null) return hit.Id;
         }
 
-        _cache[normalised] = id;
-        return id;
-    }
-
-    private void PrepopulateCache()
-    {
-        foreach (var m in new FilteredElementCollector(_doc).OfClass(typeof(Material)).Cast<Material>())
-        {
-            var hex = ImportColor.FromColor(m.Color);
-            if (hex is null) continue;
-            if (!m.Name.StartsWith("BIMy ", StringComparison.OrdinalIgnoreCase)
-                && !m.Name.StartsWith("RWP ", StringComparison.OrdinalIgnoreCase))
-                continue;
-            if (!_cache.ContainsKey(hex)) _cache[hex] = m.Id;
-        }
-    }
-
-    private void Paint(Material mat, string hex)
-    {
-        var color = ImportColor.ToRevit(hex);
-        mat.Color = color;
-        mat.UseRenderAppearanceForShading = false;
-        mat.Transparency = 0;
-
-        // Match surface + cut patterns so plan/section views render the colour,
-        // not just shaded 3D views.
-        if (_solidFillPatternId != ElementId.InvalidElementId)
-        {
-            try { mat.SurfaceForegroundPatternId = _solidFillPatternId; } catch { }
-            try { mat.CutForegroundPatternId = _solidFillPatternId; } catch { }
-        }
-        try { mat.SurfaceForegroundPatternColor = color; } catch { }
-        try { mat.CutForegroundPatternColor = color; } catch { }
-
-        var desc = mat.get_Parameter(BuiltInParameter.ALL_MODEL_DESCRIPTION);
-        if (desc != null && !desc.IsReadOnly)
-        {
-            try { desc.Set(ImportedTag); } catch { }
-        }
-    }
-
-    private static ElementId FindSolidFillPatternId(Document doc)
-    {
-        var pattern = new FilteredElementCollector(doc)
-            .OfClass(typeof(FillPatternElement))
-            .Cast<FillPatternElement>()
-            .FirstOrDefault(f => f.GetFillPattern().IsSolidFill);
-        return pattern?.Id ?? ElementId.InvalidElementId;
+        return ElementId.InvalidElementId;
     }
 }

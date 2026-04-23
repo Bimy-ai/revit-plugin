@@ -1,4 +1,14 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!--
+  Installer-deployed manifest. Only the Application entry is registered; BIMy
+  commands live inside the BIMy ribbon pulldown (see BimyApplication.OnStartup)
+  so they must NOT be declared here as <AddIn Type="Command"> — Revit would
+  otherwise auto-list each one under Add-Ins → External Tools alongside the
+  ribbon, producing duplicates.
+
+  <Assembly> stays relative to this file's folder so the install layout is
+  fully self-contained — see installer\BIMy.iss for the bundled deployment.
+-->
 <RevitAddIns>
   <AddIn Type="Application">
     <Name>BIMy</Name>
@@ -7,38 +17,5 @@
     <ClientId>6f1c2a3e-9b4d-4d8f-9a0c-2f7e6b3a1d10</ClientId>
     <VendorId>RWPL</VendorId>
     <VendorDescription>RevitWallsPlugin BIMy add-in</VendorDescription>
-  </AddIn>
-  <AddIn Type="Command">
-    <Name>BIMy: Set API token</Name>
-    <Text>Set BIMy API token…</Text>
-    <Description>Set the BIMy API token and pick the environment.</Description>
-    <Assembly>BIMy\RevitWallsPlugin.dll</Assembly>
-    <FullClassName>RevitWallsPlugin.Commands.SetApiTokenCommand</FullClassName>
-    <ClientId>6f1c2a3e-9b4d-4d8f-9a0c-2f7e6b3a1d11</ClientId>
-    <VendorId>RWPL</VendorId>
-    <VendorDescription>RevitWallsPlugin BIMy add-in</VendorDescription>
-    <VisibilityMode>AlwaysVisible</VisibilityMode>
-  </AddIn>
-  <AddIn Type="Command">
-    <Name>BIMy: Disconnect</Name>
-    <Text>Disconnect BIMy</Text>
-    <Description>Clear the saved BIMy session.</Description>
-    <Assembly>BIMy\RevitWallsPlugin.dll</Assembly>
-    <FullClassName>RevitWallsPlugin.Commands.DisconnectCommand</FullClassName>
-    <ClientId>6f1c2a3e-9b4d-4d8f-9a0c-2f7e6b3a1d12</ClientId>
-    <VendorId>RWPL</VendorId>
-    <VendorDescription>RevitWallsPlugin BIMy add-in</VendorDescription>
-    <VisibilityMode>AlwaysVisible</VisibilityMode>
-  </AddIn>
-  <AddIn Type="Command">
-    <Name>BIMy: Load from BIMy</Name>
-    <Text>Load from BIMy</Text>
-    <Description>Fetch userObjects from a BIMy URL and rebuild walls.</Description>
-    <Assembly>BIMy\RevitWallsPlugin.dll</Assembly>
-    <FullClassName>RevitWallsPlugin.Commands.LoadFromBimyCommand</FullClassName>
-    <ClientId>6f1c2a3e-9b4d-4d8f-9a0c-2f7e6b3a1d13</ClientId>
-    <VendorId>RWPL</VendorId>
-    <VendorDescription>RevitWallsPlugin BIMy add-in</VendorDescription>
-    <VisibilityMode>AlwaysVisible</VisibilityMode>
   </AddIn>
 </RevitAddIns>
