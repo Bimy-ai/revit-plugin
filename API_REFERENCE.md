@@ -223,10 +223,12 @@ mat.CutForegroundPatternColor        = mat.Color;
 
 ## Where the plug-in actually sets parameters
 
-| File                                    | What it sets                                                                       |
-| --------------------------------------- | ---------------------------------------------------------------------------------- |
-| `Services/WallBuilder.cs`               | `WALL_KEY_REF_PARAM`, `WALL_HEIGHT_TYPE`, `WALL_TOP_OFFSET`, instance comments.    |
-| `Services/WallTypeProvider.cs`          | `ALL_MODEL_TYPE_COMMENTS` on imported wall types.                                  |
+| File                                    | What it sets                                                                                          |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `Services/WallBuilder.cs`               | `WALL_KEY_REF_PARAM` (from segment baseline), `WALL_STRUCTURAL_USAGE_PARAM` (from segment kind),       |
+|                                         | `WALL_HEIGHT_TYPE`, `WALL_TOP_OFFSET`, instance comments.                                              |
+| `Services/WallTypeProvider.cs`          | Clones the fallback wall type per ≈5mm thickness bucket and rewrites the structural layer width via   |
+|                                         | `CompoundStructure.SetLayerWidth`.                                                                    |
 | `Services/FloorBuilder.cs`              | Instance comments on imported floors.                                              |
 | `Services/FloorTypeProvider.cs`         | `ALL_MODEL_TYPE_COMMENTS` on imported floor types.                                 |
 | `Services/CeilingBuilder.cs`            | `CEILING_HEIGHTABOVELEVEL_PARAM`, instance comments.                               |

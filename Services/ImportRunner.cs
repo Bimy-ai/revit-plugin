@@ -37,8 +37,12 @@ internal static class ImportRunner
             var objectCount = payload.UserObjects?.Count ?? 0;
             Log.Info($"Fetched {objectCount} userObject(s).");
             project = ProjectBuilder.Build(payload);
+            var s = project.Stats;
             Log.Info($"Built {project.Walls.Count} wall(s), {project.Floors.Count} floor(s), "
                      + $"{project.Ceilings.Count} ceiling(s) across {project.LevelElevationsMm.Count} level(s).");
+            Log.Info($"Wall DSL: {s.SegmentObjects} segment, {s.PolygonObjects} polygon. "
+                     + $"Segments read={s.SegmentsRead}, dropped: short={s.SegmentsDroppedShort}, malformed={s.SegmentsDroppedMalformed}. "
+                     + $"Edges deduped={s.EdgesDeduped}.");
         }
         catch (Exception ex)
         {

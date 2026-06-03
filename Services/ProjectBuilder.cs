@@ -29,7 +29,23 @@ internal static class ProjectBuilder
         List<WallDto> Walls,
         List<FloorDto> Floors,
         List<CeilingDto> Ceilings,
-        Dictionary<string, double> LevelElevationsMm);
+        Dictionary<string, double> LevelElevationsMm,
+        BuildStats Stats);
+
+    /// <summary>
+    /// Per-build counters surfaced to the import log. Helps diagnose "walls
+    /// missing" reports by recording which input shape was seen and how many
+    /// segments were dropped (sub-mm / malformed) before reaching Revit.
+    /// </summary>
+    public sealed class BuildStats
+    {
+        public int SegmentObjects { get; set; }
+        public int PolygonObjects { get; set; }
+        public int SegmentsRead { get; set; }
+        public int SegmentsDroppedShort { get; set; }
+        public int SegmentsDroppedMalformed { get; set; }
+        public int EdgesDeduped { get; set; }
+    }
 
     private const double MinEdgeLengthMm = 1.0;
     private const double CollinearToleranceMm2 = 1.0;
@@ -41,6 +57,7 @@ internal static class ProjectBuilder
         var walls = new List<WallDto>();
         var floors = new List<FloorDto>();
         var ceilings = new List<CeilingDto>();
+        var stats = new BuildStats();
 
         var userObjects = payload.UserObjects ?? new List<UserObjectDto>();
         var storyCount = ComputeStoryCount(userObjects);
@@ -49,16 +66,19 @@ internal static class ProjectBuilder
         {
             var storyAssignments = ResolveStoryAssignments(obj, storyCount);
 
-            // One wall-run per story — keep every level's walls as their own
-            // Revit instances so users can edit, delete, or host elements on
-            // them independently.
-            foreach (var a in storyAssignments)
+            // Coalesce consecutive same-type stories into spanning wall runs:
+            // a 3-story column of identical walls becomes one Revit wall from
+            // L1's base to L4 instead of three stacked instances. Floors and
+            // ceilings remain per-story (one slab per level) — see EmitRun.
+            foreach (var run in CoalesceRuns(storyAssignments))
             {
-                EmitRun(obj, new Run(a.StoryIndex, a.StoryIndex, a.Type), walls, floors, ceilings);
+                EmitRun(obj, run, walls, floors, ceilings, stats);
             }
         }
 
+        var before = walls.Count;
         DeduplicateEdges(walls);
+        stats.EdgesDeduped = before - walls.Count;
         var centerX = double.NaN;
         var centerY = double.NaN;
         ComputeBoundingCenter(walls, floors, ceilings, ref centerX, ref centerY);
@@ -70,7 +90,7 @@ internal static class ProjectBuilder
         }
 
         var levelElevationsMm = ComputeLevelElevations(userObjects, storyCount);
-        return new Result(walls, floors, ceilings, levelElevationsMm);
+        return new Result(walls, floors, ceilings, levelElevationsMm, stats);
     }
 
     // ── Story planning ───────────────────────────────────────────────────────
@@ -104,6 +124,46 @@ internal static class ProjectBuilder
         return assignments;
     }
 
+    /// <summary>
+    /// Group consecutive <see cref="StoryAssignment"/>s sharing the same
+    /// FloorType identity into a single <see cref="Run"/>. Identity is
+    /// <see cref="FloorTypeDto.Id"/> when present (the editor's stable
+    /// `_id`); otherwise the FloorTypeDto instance itself, so different
+    /// stories pointing at different in-memory type objects don't get
+    /// silently coalesced.
+    /// </summary>
+    private static IEnumerable<Run> CoalesceRuns(List<StoryAssignment> assignments)
+    {
+        if (assignments.Count == 0) yield break;
+
+        static object KeyOf(FloorTypeDto t)
+            => string.IsNullOrEmpty(t.Id) ? (object)t : t.Id!;
+
+        var runStart = assignments[0].StoryIndex;
+        var runType = assignments[0].Type;
+        var runKey = KeyOf(runType);
+        var prevStory = runStart;
+
+        for (var i = 1; i < assignments.Count; i++)
+        {
+            var a = assignments[i];
+            var key = KeyOf(a.Type);
+            // Require strictly consecutive story indices AND identical type
+            // — a gap or a type change ends the run.
+            if (Equals(key, runKey) && a.StoryIndex == prevStory + 1)
+            {
+                prevStory = a.StoryIndex;
+                continue;
+            }
+            yield return new Run(runStart, prevStory, runType);
+            runStart = a.StoryIndex;
+            runType = a.Type;
+            runKey = key;
+            prevStory = a.StoryIndex;
+        }
+        yield return new Run(runStart, prevStory, runType);
+    }
+
     // ── Emit one run (walls + per-story floors/ceilings) ─────────────────────
 
     private static void EmitRun(
@@ -111,7 +171,8 @@ internal static class ProjectBuilder
         Run run,
         List<WallDto> walls,
         List<FloorDto> floors,
-        List<CeilingDto> ceilings)
+        List<CeilingDto> ceilings,
+        BuildStats stats)
     {
         var type = run.Type;
 
@@ -130,12 +191,25 @@ internal static class ProjectBuilder
         var spanStories = run.EndStory - run.StartStory + 1;
         var spanHeightMm = heightMm * spanStories;
 
-        // Walls span the whole run — one instance per edge.
-        var wallSource = HasContent(type.Walls) ? type.Walls : obj.PolygonPoints;
-        foreach (var polygon in NormalizePolygons(wallSource))
+        // Walls: prefer the editor's segment DSL (`type.walls` = array of
+        // {start, end, depth, baseline, kind?}). If `type.walls` is still in
+        // the legacy polygon shape — or absent — fall back to polygon edges
+        // from `type.walls` / `obj.polygonPoints`.
+        if (IsWallSegmentList(type.Walls))
         {
-            EmitWallPolygon(polygon, baseLevel, topLevel, typeName, typeId,
-                spanHeightMm, thicknessMm, colorHex, walls);
+            stats.SegmentObjects++;
+            EmitWallSegments(type.Walls, baseLevel, topLevel, typeName, typeId,
+                spanHeightMm, thicknessMm, colorHex, walls, stats);
+        }
+        else
+        {
+            stats.PolygonObjects++;
+            var wallSource = HasContent(type.Walls) ? type.Walls : obj.PolygonPoints;
+            foreach (var polygon in NormalizePolygons(wallSource))
+            {
+                EmitWallPolygon(polygon, baseLevel, topLevel, typeName, typeId,
+                    spanHeightMm, thicknessMm, colorHex, walls);
+            }
         }
 
         // Floors + ceilings stay per story so each level gets its own slab.
@@ -186,6 +260,137 @@ internal static class ProjectBuilder
     }
 
     private static string LevelName(int zeroBasedIdx) => $"Level {zeroBasedIdx + 1}";
+
+    // ── Wall segments (new DSL: `[{start,end,depth,baseline,kind}, …]`) ──────
+
+    /// <summary>
+    /// True when <paramref name="data"/> looks like the editor's per-wall
+    /// segment array: objects with `start` and `end` fields, each holding a
+    /// 2D point in either array (`[x, y]`) or object (`{x, y}`) form. The
+    /// legacy polygon shape is `[{x,y}, …]` or arrays of those, never
+    /// `{start, end}`.
+    /// </summary>
+    private static bool IsWallSegmentList(JsonElement data)
+    {
+        if (!HasContent(data)) return false;
+        var first = data[0];
+        if (first.ValueKind != JsonValueKind.Object) return false;
+        return IsPointField(first, "start") && IsPointField(first, "end");
+    }
+
+    private static bool IsPointField(JsonElement obj, string name)
+    {
+        if (!obj.TryGetProperty(name, out var v)) return false;
+        if (v.ValueKind == JsonValueKind.Array
+            && v.GetArrayLength() >= 2
+            && v[0].ValueKind == JsonValueKind.Number
+            && v[1].ValueKind == JsonValueKind.Number)
+            return true;
+        if (v.ValueKind == JsonValueKind.Object
+            && v.TryGetProperty("x", out var x) && x.ValueKind == JsonValueKind.Number
+            && v.TryGetProperty("y", out var y) && y.ValueKind == JsonValueKind.Number)
+            return true;
+        return false;
+    }
+
+    private static bool TryReadPoint(JsonElement obj, string name, out double x, out double y)
+    {
+        x = 0; y = 0;
+        if (!obj.TryGetProperty(name, out var v)) return false;
+        if (v.ValueKind == JsonValueKind.Array
+            && v.GetArrayLength() >= 2
+            && v[0].ValueKind == JsonValueKind.Number
+            && v[1].ValueKind == JsonValueKind.Number)
+        {
+            x = v[0].GetDouble();
+            y = v[1].GetDouble();
+            return true;
+        }
+        if (v.ValueKind == JsonValueKind.Object
+            && v.TryGetProperty("x", out var xEl) && xEl.ValueKind == JsonValueKind.Number
+            && v.TryGetProperty("y", out var yEl) && yEl.ValueKind == JsonValueKind.Number)
+        {
+            x = xEl.GetDouble();
+            y = yEl.GetDouble();
+            return true;
+        }
+        return false;
+    }
+
+    private static void EmitWallSegments(
+        JsonElement segments,
+        string baseLevel,
+        string topLevel,
+        string typeName,
+        string? typeId,
+        double heightMm,
+        double fallbackThicknessMm,
+        string? colorHex,
+        List<WallDto> walls,
+        BuildStats stats)
+    {
+        foreach (var seg in segments.EnumerateArray())
+        {
+            if (seg.ValueKind != JsonValueKind.Object
+                || !TryReadPoint(seg, "start", out var sx, out var sy)
+                || !TryReadPoint(seg, "end",   out var ex, out var ey))
+            {
+                stats.SegmentsDroppedMalformed++;
+                continue;
+            }
+            stats.SegmentsRead++;
+
+            var startMm = new[] { ToMm(sx), ToMm(sy) };
+            var endMm   = new[] { ToMm(ex), ToMm(ey) };
+
+            var dx = endMm[0] - startMm[0];
+            var dy = endMm[1] - startMm[1];
+            if (dx * dx + dy * dy < MinEdgeLengthMm * MinEdgeLengthMm)
+            {
+                stats.SegmentsDroppedShort++;
+                continue;
+            }
+
+            // Per-wall thickness from the segment; fall back to the type's
+            // thickness when the editor didn't tag it (older partial exports).
+            var thicknessMm = fallbackThicknessMm;
+            if (seg.TryGetProperty("depth", out var depthEl) && depthEl.ValueKind == JsonValueKind.Number)
+            {
+                var d = ToMm(depthEl.GetDouble());
+                if (d > 0) thicknessMm = d;
+            }
+
+            // Baseline is normally an integer in {−1, 0, 1}; treat anything ≥ 0.5
+            // as +1, ≤ −0.5 as −1, otherwise 0 (centered) so a future float
+            // value doesn't break the wall location-line mapping.
+            var baseline = 0;
+            if (seg.TryGetProperty("baseline", out var bEl) && bEl.ValueKind == JsonValueKind.Number)
+            {
+                var b = bEl.GetDouble();
+                if (b >= 0.5) baseline = 1;
+                else if (b <= -0.5) baseline = -1;
+            }
+
+            string? kind = null;
+            if (seg.TryGetProperty("kind", out var kEl) && kEl.ValueKind == JsonValueKind.String)
+                kind = kEl.GetString();
+
+            walls.Add(new WallDto
+            {
+                Type = typeName,
+                TypeId = typeId,
+                Level = baseLevel,
+                TopLevel = topLevel,
+                Start = startMm,
+                End = endMm,
+                Height = heightMm,
+                ThicknessMm = thicknessMm,
+                ColorHex = colorHex,
+                Baseline = baseline,
+                Kind = kind,
+            });
+        }
+    }
 
     // ── Polygon → wall edges ─────────────────────────────────────────────────
 
@@ -253,6 +458,11 @@ internal static class ProjectBuilder
                 Height = heightMm,
                 ThicknessMm = thicknessMm,
                 ColorHex = colorHex,
+                // Polygon emit pre-normalises winding (outer CW, holes CCW) so
+                // the wall body always sits to the RIGHT of the curve — Revit's
+                // interior side under flip=false. Baseline=+1 reproduces that
+                // through the new generic baseline → location-line mapping.
+                Baseline = 1,
             });
         }
     }
@@ -373,7 +583,7 @@ internal static class ProjectBuilder
             (x1, x2) = (x2, x1);
             (y1, y2) = (y2, y1);
         }
-        return $"{w.Level}>{w.TopLevel ?? ""}|{w.Type}|{w.ThicknessMm}|{w.ColorHex ?? ""}|{x1},{y1}->{x2},{y2}";
+        return $"{w.Level}>{w.TopLevel ?? ""}|{w.Type}|{w.ThicknessMm}|{w.Baseline}|{w.ColorHex ?? ""}|{x1},{y1}->{x2},{y2}";
     }
 
     // ── Level elevations ─────────────────────────────────────────────────────

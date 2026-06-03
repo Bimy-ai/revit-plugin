@@ -85,7 +85,7 @@ RevitWallsPlugin/
 ├── RevitWallsPlugin.csproj          # net8.0-windows, x64, references Revit DLLs
 ├── RevitWallsPlugin.addin           # Revit add-in manifest (1 application + 3 commands)
 ├── install.sh                       # Build + copy to %AppData%\Autodesk\Revit\Addins\<year>\
-├── sample.json                      # Legacy example of the pre-userObjects contract
+├── sample.json                      # Minimal example payload (segment-DSL walls + floor/ceiling polygons)
 │
 ├── Commands/
 │   ├── BimyApplication.cs           # IExternalApplication: builds the ribbon, warms up session
@@ -139,14 +139,20 @@ Response shape (only the `userObjects` field is consumed):
   "userObjects": [
     {
       "floors":        [0, 0, 1, 0],       // per-floor index into `types`. Default [0].
-      "polygonPoints": /* see below */,    // outer polygon of the object (+ optional holes)
+      "polygonPoints": /* legacy footprint, used by floor/ceiling fall-back path */,
       "types": [
         {
-          "name":      "Generic",          // shown as the wall-type name root
+          "name":      "Generic",
           "height":    3,                  // floor height in METERS
-          "thickness": 0.2,                // optional wall thickness in METERS (default 0.2)
-          "color":     "#a0c4ff",          // optional hex color for the wall
-          "walls":     /* optional per-type polygon overriding polygonPoints */
+          "thickness": 0.2,                // fallback wall thickness in METERS (when a segment omits depth)
+          "color":     "#a0c4ff",          // optional hex color carried on the type
+          "walls":     [                   // segment DSL — preferred input
+            { "start": [0, 0], "end": [5, 0], "depth": 0.2, "baseline": 1,  "kind": "structural" },
+            { "start": [5, 0], "end": [5, 4], "depth": 0.2, "baseline": 1,  "kind": "structural" },
+            { "start": [3, 0], "end": [3, 4], "depth": 0.1, "baseline": 0,  "kind": "partition"  }
+          ],
+          "floor":     /* polygon — same shape as polygonPoints */,
+          "ceiling":   /* polygon — same shape as polygonPoints */
         }
       ]
     }
@@ -154,9 +160,18 @@ Response shape (only the `userObjects` field is consumed):
 }
 ```
 
-### Polygon shape
+### Wall segment fields
 
-`polygonPoints` (and `types[].walls`) accept any of the following shapes — see `Services/ProjectBuilder.cs`:
+| Field | Meaning |
+| --- | --- |
+| `start`, `end` | endpoints in metres |
+| `depth` | wall thickness in metres; falls back to `type.thickness` if absent. Bucketed to the nearest 5 mm to pick a Revit `WallType`. |
+| `baseline` | `-1`/`0`/`+1` — body sits on the −normal / centred / +normal side of the line. Maps to `WALL_KEY_REF_PARAM` (Finish Face Interior / Wall Centerline / Finish Face Exterior). |
+| `kind` | optional `"structural"`/`"partition"` → `WALL_STRUCTURAL_USAGE_PARAM` (Bearing / NonBearing). |
+
+### Legacy polygon shape
+
+For backwards compatibility, `types[].walls` and `obj.polygonPoints` are still accepted as polygon data (one wall per edge) when the wall array doesn't look like the segment DSL. `types[].floor` and `types[].ceiling` always use this polygon shape:
 
 | Shape | Meaning |
 | --- | --- |
@@ -167,7 +182,7 @@ Response shape (only the `userObjects` field is consumed):
 
 ### Units
 
-- `polygonPoints.x`, `y` are in **meters** (matches the upstream editor).
+- Wall `start`/`end`, polygon `x`/`y`, and `depth` are in **meters** (matches the upstream editor).
 - `types[].height`, `types[].thickness` are in **meters**.
 - The plug-in multiplies all inputs by 1000 to produce its internal millimetre representation and then converts to Revit internal units (feet) at wall-creation time.
 
@@ -230,37 +245,37 @@ Notes:
 
 ---
 
-## Wall types, thickness, and color
+## Wall types and thickness
 
-`Services/WallTypeProvider` materialises one Revit `WallType` per unique `(typeName, thicknessMm)` combo encountered during the import. Color is carried on the type's material rather than encoded in its name.
+`Services/WallTypeProvider` resolves walls to a Revit `WallType` bucketed by structural-layer thickness:
 
-- **Single-layer.** Each type is built with `CompoundStructure.CreateSingleLayerCompoundStructure` so the layer's thickness exactly matches the source `thickness`. Earlier behaviour inherited the default Basic Wall's compound structure, which quietly ignored `thickness`.
-- **Naming.** `"<TypeName> <Thickness>mm"`. Deterministic — repeated imports reuse the same type. The first color seen for a given `(typeName, thickness)` wins; later walls with the same name+thickness share it.
-- **No `RWP` prefix.** Types carry the original user-facing name. They're identified programmatically via `Type Comments = "BIMy import"` so schedules stay readable.
-- **Color parsing.** `types[].color` may be supplied as `#rrggbb`, bare `rrggbb`, shorthand `#rgb`, or `rgb(r,g,b)` / `rgba(r,g,b,a)` (alpha is dropped, percent components supported). Unparseable values yield a wall with no assigned material rather than a silent gray fallback.
-- **Materials.** When a `color` is supplied, a Material named `BIMy <#hex>` is created (or reused) with:
-  - `Color` set to the hex
-  - `UseRenderAppearanceForShading = false` so shaded views reflect the colour
-  - Surface foreground and Cut foreground pattern = solid fill, coloured to the hex, so plan / section / hidden-line views also render the colour
-- **Cache.** The `WallTypeProvider` constructor pre-populates its cache from types and materials already in the project (matching the naming convention above), so re-runs don't rebuild them.
+1. At construction, it picks one **fallback wall type** — first the project's "Concrete - 12\"" variant, then any "Concrete*" basic wall ≈ 12" wide, then the project's default basic wall type, then any basic wall as a last resort.
+2. On the first wall in a given **5 mm thickness bucket**, the fallback is `Duplicate`-d, named `BIMy Wall <NNN> mm`, and its core (or widest) compound-structure layer is rewritten via `CompoundStructure.SetLayerWidth`.
+3. The duplicated type is cached, so a project with three distinct wall depths produces three wall types — not three per instance.
 
-Per-import state: new types and materials persist in the project. On the next import they are reused by (name, thickness) and, if the cached type is re-encountered, its material is re-applied from the first color seen that run.
+If the fallback already matches the bucket (within ±0.6"), it's reused verbatim — no degenerate `Concrete - 12" → Concrete - 12" (1)` clones.
+
+Templates that lock layer widths (some content libraries do) gracefully fall back to using the fallback type's native thickness; the wall still imports.
+
+Instance branding stays in `ALL_MODEL_INSTANCE_COMMENTS = "BIMy import <projectId>"` so re-imports replace only previously-imported walls.
+
+Color is currently a **type-level** field on the editor side and is **not** materialised on imported wall types — paint and material mapping live on the build TODO list (see Extending the plug-in).
 
 ---
 
-## Wall orientation and polygon winding
+## Wall orientation and baseline
 
-Revit's wall orientation with `flip=false` is `Z × curveDirection`, which puts the exterior face on the **left** of the curve direction. To make the polygon edge match the visible wall face:
+Revit's wall orientation with `flip=false` is `Z × curveDirection`, which puts the **exterior face on the LEFT of the curve direction**. The editor's normal is the opposite — `(dir.y, −dir.x)` = RIGHT of direction — which lines up with Revit's **interior side**.
 
-1. `ProjectBuilder` normalises each outer ring to **clockwise** and each hole to **counter-clockwise** (standard shoelace signed-area check).
-2. `WallBuilder` creates every wall with `flip=false` and `WALL_KEY_REF_PARAM = FinishFaceExterior`.
+`WallBuilder` maps the segment DSL's `baseline` into `WALL_KEY_REF_PARAM`:
 
-The net effect:
+| `baseline` | Body sits on… | Location line lands on… | `WallLocationLine`     |
+| ---------- | ------------- | ----------------------- | ---------------------- |
+| `+1`       | interior side | exterior face           | `FinishFaceExterior`   |
+|  `0`       | centred       | centreline              | `WallCenterline`       |
+| `-1`       | exterior side | interior face           | `FinishFaceInterior`   |
 
-- **Outer rings** — the source's outer polygon edge = the outside face of the wall. Walls grow inward, into the building footprint.
-- **Holes (courtyards / lightwells)** — the source's inner polygon edge = the courtyard-facing face of the wall. Walls grow outward into the surrounding building material.
-
-Source polygons may be supplied in either winding direction; the normalisation step makes the result consistent either way.
+Legacy polygon-derived walls go through `ProjectBuilder` with their winding pre-normalised (outer CW, holes CCW) and `Baseline` forced to `+1`, which reproduces the pre-1.1 behaviour of always anchoring to the exterior face.
 
 ---
 
@@ -404,10 +419,10 @@ The pasted string isn't recognised as an ID or a BIMy URL containing one. Valid 
 Token wrong or wrong environment. Workspace admin can issue a new key. Use Disconnect to switch environments.
 
 **Walls face the wrong way.**
-The polygon may be wound in an unexpected direction; the plug-in normalises outer rings to CW and holes to CCW, but if the source mixes conventions inconsistently, individual walls can flip. Select the wall and press space bar to flip its orientation.
+For segment-based input, the body offset comes from each wall's `baseline`. If the editor exported a wall with the wrong `baseline` sign, the body lands on the opposite side. Select the wall and press space to flip; or fix `baseline` upstream. Legacy polygon input may still wind inconsistently — `ProjectBuilder` normalises outer rings to CW and holes to CCW, but mixed-convention sources can still produce a flipped wall.
 
 **Wall thickness is wrong after import.**
-`types[].thickness` is in meters. A value of `200` produces 200 m walls. The plug-in now honours this field (previously ignored); check the source data.
+For segments, `depth` (metres) wins, falling back to `type.thickness` (metres) when absent. Both are bucketed to 5 mm before picking a Revit wall type. A value of `200` produces 200 m walls — check that the source is in metres, not millimetres.
 
 **Import hangs mid-run.**
 Usually a Revit modal warning that `SuppressWarningsPreprocessor` didn't catch. Check the log for "Transaction failed". Alt+Tab to surface any hidden dialog.

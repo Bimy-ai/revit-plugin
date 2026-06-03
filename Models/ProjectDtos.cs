@@ -61,7 +61,14 @@ public sealed class FloorTypeDto
     [JsonPropertyName("color")]
     public string? Color { get; set; }
 
-    /// <summary>Per-type wall polygon data. Same shape as UserObject.PolygonPoints.</summary>
+    /// <summary>
+    /// Per-type wall data. New shape: array of segment objects
+    ///   { "start": [x, y], "end": [x, y], "depth": 0.2, "baseline": -1|0|1, "kind"?: "structural"|"partition" }
+    /// where x/y and depth are in metres. Legacy shape (same as
+    /// <see cref="UserObjectDto.PolygonPoints"/> — flat ring, list of rings,
+    /// or polygons-with-holes) is still accepted and parsed by the polygon
+    /// edge path in <see cref="Services.ProjectBuilder"/>.
+    /// </summary>
     [JsonPropertyName("walls")]
     public JsonElement Walls { get; set; }
 
