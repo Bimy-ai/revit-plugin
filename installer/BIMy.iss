@@ -31,7 +31,7 @@
 
 #define AppId          "{7E6A1F4B-9C2D-4A3E-B5F1-2D8C4E6A9B10}"
 #define AppName        "BIMy for Revit"
-#define AppVersion     "1.1.1"
+#define AppVersion     "1.1.2"
 #define AppPublisher   "BIMy.ai"
 #define AppURL         "https://bimy.ai"
 #define AppSupportURL  "https://bimy.ai/support"
