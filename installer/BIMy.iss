@@ -31,7 +31,7 @@
 
 #define AppId          "{7E6A1F4B-9C2D-4A3E-B5F1-2D8C4E6A9B10}"
 #define AppName        "BIMy for Revit"
-#define AppVersion     "1.1.2"
+#define AppVersion     "1.1.4"
 #define AppPublisher   "BIMy.ai"
 #define AppURL         "https://bimy.ai"
 #define AppSupportURL  "https://bimy.ai/support"
@@ -209,6 +209,13 @@ begin
     Result := (ResultCode = 0);
 end;
 
+// EVERY message box below is a SuppressibleMsgBox, never a plain MsgBox.
+// /SUPPRESSMSGBOXES does not touch MsgBox() calls made from [Code] — only
+// Setup's own built-in prompts — so a plain MsgBox puts a modal window on an
+// invisible /VERYSILENT install and waits for a click that will never come. The
+// install completes and then hangs forever. That breaks unattended deployment
+// (an IT push, a CI job, dev-reinstall.ps1). The final argument is the answer to
+// assume when suppressed.
 function InitializeSetup(): Boolean;
 begin
   Result := True;
@@ -219,19 +226,22 @@ begin
   // Add/Remove Programs.
   if GetArrayLength(DetectInstalledRevitYears()) = 0 then
   begin
-    MsgBox('No Revit installations were detected on this machine ' +
+    SuppressibleMsgBox('No Revit installations were detected on this machine ' +
            '(looked for C:\Program Files\Autodesk\Revit <year>\Revit.exe for years ' +
            IntToStr(FirstRevitYear) + '–' + IntToStr(LastRevitYear) + ').' + #13#10 + #13#10 +
            'Install Revit first, then re-run this Setup.',
-           mbInformation, MB_OK);
+           mbInformation, MB_OK, IDOK);
     Result := False;
     Exit;
   end;
 
   if IsRevitRunning() then
   begin
-    if MsgBox('Revit is currently running. Please close Revit before continuing — otherwise the add-in files may be locked and the install can fail silently.' + #13#10 + #13#10 +
-              'Continue anyway?', mbConfirmation, MB_YESNO) = IDNO then
+    // Suppressed answer is IDYES: a silent install was launched by something
+    // that has already decided (dev-reinstall.ps1 closes Revit itself), and
+    // stopping there would strand it.
+    if SuppressibleMsgBox('Revit is currently running. Please close Revit before continuing — otherwise the add-in files may be locked and the install can fail silently.' + #13#10 + #13#10 +
+              'Continue anyway?', mbConfirmation, MB_YESNO, IDYES) = IDNO then
       Result := False;
   end;
 end;
@@ -308,7 +318,7 @@ begin
   TemplatePath := ExpandConstant('{tmp}\{#AddinTemplate}');
   if not LoadStringFromFile(TemplatePath, TemplateBytes) then
   begin
-    MsgBox('Installer error: could not read ' + TemplatePath, mbError, MB_OK);
+    SuppressibleMsgBox('Installer error: could not read ' + TemplatePath, mbError, MB_OK, IDOK);
     Exit;
   end;
   ManifestXml := String(TemplateBytes);
@@ -347,8 +357,8 @@ begin
 
   if GetArrayLength(Installed) = 0 then
   begin
-    MsgBox('Installation failed — could not write the add-in files to any Revit Addins folder. ' +
-           'See the setup log for details.', mbError, MB_OK);
+    SuppressibleMsgBox('Installation failed — could not write the add-in files to any Revit Addins folder. ' +
+           'See the setup log for details.', mbError, MB_OK, IDOK);
     Exit;
   end;
 
@@ -361,7 +371,7 @@ begin
     Summary := Summary + #13#10#13#10 +
                'Tip: run this installer as administrator to also install for other Windows accounts on this machine.';
 
-  MsgBox(Summary, mbInformation, MB_OK);
+  SuppressibleMsgBox(Summary, mbInformation, MB_OK, IDOK);
 end;
 
 // ─── Uninstall ────────────────────────────────────────────────────────────────
@@ -378,8 +388,8 @@ begin
   Result := True;
   if IsRevitRunning() then
   begin
-    MsgBox('Revit is currently running. Close Revit first, then run the uninstaller again — otherwise the plugin DLL is locked and won''t be removed cleanly.',
-           mbInformation, MB_OK);
+    SuppressibleMsgBox('Revit is currently running. Close Revit first, then run the uninstaller again — otherwise the plugin DLL is locked and won''t be removed cleanly.',
+           mbInformation, MB_OK, IDOK);
     Result := False;
   end;
 end;

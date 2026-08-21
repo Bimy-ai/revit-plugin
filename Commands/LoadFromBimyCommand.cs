@@ -14,12 +14,9 @@ public sealed class LoadFromBimyCommand : IExternalCommand
     public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
     {
         var uiApp = commandData.Application;
-        var uiDoc = uiApp.ActiveUIDocument;
-        if (uiDoc is null)
-        {
-            TaskDialog.Show("Load from BIMy", "No active Revit document.");
-            return Result.Cancelled;
-        }
+        // No active-document check: pulling a BIMy model OPENS a new native
+        // project (via Revit's IFC importer), so it works from the Revit start
+        // page with nothing open, not only inside an existing document.
 
         if (!SessionState.IsConnected)
         {
@@ -33,26 +30,45 @@ public sealed class LoadFromBimyCommand : IExternalCommand
             {
                 MainIcon = TaskDialogIcon.TaskDialogIconWarning,
                 MainInstruction = "Not connected to BIMy",
-                MainContent = "Use Connect BIMy → Set API token… to set up a session, then try again.",
+                MainContent = "Use BIMy → Set API token… to set up a session, then try again.",
             }.Show();
             return Result.Cancelled;
         }
 
         var token = SessionState.Token!;
         var env = SessionState.Environment ?? BimyEnvironments.Default;
-        var envLabel = BimyEnvironments.DisplayName(env);
 
-        var lastId = ProjectIdState.Load(env);
-        var projectId = ProjectIdDialog.Show(uiApp.MainWindowHandle, "Load from BIMy", envLabel, lastId);
-        if (string.IsNullOrWhiteSpace(projectId))
+        // Fetch the project list and the publish index together, behind the
+        // progress window — two small calls, but on a slow connection they are
+        // still seconds during which a dialog-less Revit looks hung. Neither
+        // call can fail the command: both degrade to an empty list, and the
+        // picker's paste-an-id field covers that.
+        var (projects, published) = ProgressWindow.Run(
+            uiApp.MainWindowHandle, "Load from BIMy", "Loading your BIMy projects…",
+            async _ =>
+            {
+                var projectsTask = BimyApi.ListProjectsAsync(env, token);
+                var publishedTask = BimyApi.ListPublishedAsync(env, token);
+                await Task.WhenAll(projectsTask, publishedTask).ConfigureAwait(true);
+                return (await projectsTask, await publishedTask);
+            });
+
+        var pick = ProjectPickerDialog.Show(
+            uiApp.MainWindowHandle,
+            env,
+            SessionState.Current?.DisplayLabel,
+            projects,
+            published,
+            preselectProjectId: PullCache.LastProjectId(env),
+            canLink: uiApp.ActiveUIDocument?.Document is not null);
+
+        if (pick is null)
         {
-            Log.Info("User cancelled Load from BIMy dialog.");
+            Log.Info("User cancelled the Load from BIMy picker.");
             return Result.Cancelled;
         }
 
-        ProjectIdState.Save(env, projectId);
-
-        var url = BimyEnvironments.ProjectDataUrl(env, projectId);
-        return ImportRunner.Run(uiApp, env, projectId, url, token, ref message);
+        PullCache.RememberProjectId(env, pick.ProjectId);
+        return RevitIfcImporter.Run(uiApp, env, pick, token, ref message);
     }
 }

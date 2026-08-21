@@ -1,82 +1,56 @@
-using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace RevitWallsPlugin.Models;
 
 /// <summary>
-/// Contract returned by the API export endpoint:
-///   GET /api/:tenantId/projects/:projectId/export
-/// → { "userObjects": [...] }
-///
-/// The plug-in is responsible for converting userObjects into walls
-/// (unit conversion, polygon normalization, bounding-box centering).
+/// One row of the project picker. Read from <c>GET /api/data?model=Project</c>
+/// — the generic CRUD list every BIMy deployment already serves — so the picker
+/// works against production without waiting on an API release. Only the fields
+/// the list actually shows are declared; the rest of the document is ignored.
 /// </summary>
-public sealed class UserObjectsPayload
+public sealed class BimyProject
 {
-    [JsonPropertyName("userObjects")]
-    public List<UserObjectDto>? UserObjects { get; set; }
-}
-
-public sealed class UserObjectDto
-{
-    /// <summary>Per-floor indices into <see cref="Types"/>. Default [0] if missing.</summary>
-    [JsonPropertyName("floors")]
-    public List<int>? Floors { get; set; }
-
-    [JsonPropertyName("types")]
-    public List<FloorTypeDto>? Types { get; set; }
-
-    /// <summary>
-    /// Polygon data. Either a flat ring [{x,y},...] (legacy) or an array of
-    /// polygons where each entry is a ring or [outer, hole, hole…].
-    /// </summary>
-    [JsonPropertyName("polygonPoints")]
-    public JsonElement PolygonPoints { get; set; }
-}
-
-public sealed class FloorTypeDto
-{
-    /// <summary>Stable identity used to link walls/floors/ceilings across stories.
-    /// Two types with the same Id share Revit WallType/FloorType/CeilingType.</summary>
     [JsonPropertyName("_id")]
     public string? Id { get; set; }
-
-    /// <summary>Position of the type within its parent UserObject. Mirrors the
-    /// indices used in <see cref="UserObjectDto.Floors"/>.</summary>
-    [JsonPropertyName("index")]
-    public int? Index { get; set; }
 
     [JsonPropertyName("name")]
     public string? Name { get; set; }
 
-    /// <summary>Height in meters.</summary>
-    [JsonPropertyName("height")]
-    public double? Height { get; set; }
+    /// <summary>Project emoji chosen in BIMy's project settings, if any.</summary>
+    [JsonPropertyName("emoji")]
+    public string? Emoji { get; set; }
 
-    /// <summary>Wall thickness in meters. Falls back to 0.2 m (200 mm) when absent.</summary>
-    [JsonPropertyName("thickness")]
-    public double? Thickness { get; set; }
+    [JsonPropertyName("updatedAt")]
+    public DateTimeOffset? UpdatedAt { get; set; }
 
-    /// <summary>Hex RGB like "#a0c4ff". Applied as the wall material color.</summary>
-    [JsonPropertyName("color")]
-    public string? Color { get; set; }
+    [JsonPropertyName("createdAt")]
+    public DateTimeOffset? CreatedAt { get; set; }
 
-    /// <summary>
-    /// Per-type wall data. New shape: array of segment objects
-    ///   { "start": [x, y], "end": [x, y], "depth": 0.2, "baseline": -1|0|1, "kind"?: "structural"|"partition" }
-    /// where x/y and depth are in metres. Legacy shape (same as
-    /// <see cref="UserObjectDto.PolygonPoints"/> — flat ring, list of rings,
-    /// or polygons-with-holes) is still accepted and parsed by the polygon
-    /// edge path in <see cref="Services.ProjectBuilder"/>.
-    /// </summary>
-    [JsonPropertyName("walls")]
-    public JsonElement Walls { get; set; }
+    [JsonIgnore]
+    public string DisplayName => string.IsNullOrWhiteSpace(Name) ? "(untitled project)" : Name!;
 
-    /// <summary>Per-type floor-slab polygon data. Same shape as UserObject.PolygonPoints.</summary>
-    [JsonPropertyName("floor")]
-    public JsonElement Floor { get; set; }
+    /// <summary>Newest signal we have for "when did this project last change".</summary>
+    [JsonIgnore]
+    public DateTimeOffset? Touched => UpdatedAt ?? CreatedAt;
+}
 
-    /// <summary>Per-type ceiling polygon data. Same shape as UserObject.PolygonPoints.</summary>
-    [JsonPropertyName("ceiling")]
-    public JsonElement Ceiling { get; set; }
+/// <summary>
+/// One entry of the publish index (<c>GET /api/export/revit-ifc</c>): a project
+/// that has been exported to Revit and can therefore be pulled right now.
+/// Absent on older deployments — the picker treats that as "no badges", never
+/// as an error.
+/// </summary>
+public sealed class BimyPublishedModel
+{
+    [JsonPropertyName("projectId")]
+    public string? ProjectId { get; set; }
+
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("updatedAt")]
+    public DateTimeOffset? UpdatedAt { get; set; }
+
+    [JsonPropertyName("size")]
+    public long? Size { get; set; }
 }

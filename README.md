@@ -1,448 +1,359 @@
-# RevitWallsPlugin
+# BIMy for Revit
 
-A Revit 2025 / 2026 add-in that turns a remote BIMy project into native, editable Revit walls. It is paired with the BIMy API; all conversion from the source data into Revit geometry happens inside the plug-in.
+A Revit 2022–2030 add-in that pulls a building you designed in [BIMy](https://bimy.app) into Revit as a **native, editable Revit model** — walls, floors, ceilings, roofs, doors, windows, openings, rooms/spaces, materials and property sets, all as real Revit elements in their real Revit categories.
 
-The add-in registers a **BIMy** ribbon panel under the **Add-Ins** tab with two controls: a **Connect BIMy** pulldown (Set API token… / Disconnect) and a **Load from BIMy** button. The Load button is disabled until a valid session has been established.
+It adds a **BIMy** panel to the **Add-Ins** ribbon tab:
+
+```
+┌──────────────┬───────────────────┐
+│              │  Set API token…   │
+│  Load from   │  Disconnect       │
+│    BIMy      │  Status & log     │
+└──────────────┴───────────────────┘
+```
 
 ---
 
 ## Table of contents
 
-- [What it does](#what-it-does)
+- [How it works](#how-it-works)
+- [The round trip](#the-round-trip)
 - [Commands](#commands)
+- [Pulling a model](#pulling-a-model)
 - [Project layout](#project-layout)
-- [Data contract](#data-contract)
-- [Import pipeline](#import-pipeline)
-- [Wall types, thickness, and color](#wall-types-thickness-and-color)
-- [Wall orientation and polygon winding](#wall-orientation-and-polygon-winding)
-- [Levels](#levels)
-- [Viewport handling](#viewport-handling)
-- [Building](#building)
-- [Installing into Revit](#installing-into-revit)
-- [Usage](#usage)
+- [API contract](#api-contract)
+- [Building and installing](#building-and-installing)
 - [State and persistence](#state-and-persistence)
-- [Logging](#logging)
 - [Troubleshooting](#troubleshooting)
-- [Extending the plug-in](#extending-the-plug-in)
+- [Extending](#extending)
 
 ---
 
-## What it does
+## How it works
 
-1. Prompts for a **BIMy Project ID** (24-char hex). Accepts a bare ID or a full URL to paste-extract the ID from. The request URL is built on the fly from the saved environment: `{baseUrl}/api/data/{projectId}?model=Project`.
-2. Fetches the project from that endpoint using the stored bearer token. The payload's `userObjects` are converted (meters → mm) into a flat list of wall segments, centered so the bounding-box midpoint lands at Revit's project origin.
-3. Polygons are cleaned up before wall creation: consecutive coincident / collinear points are merged, sub-mm edges are dropped, and edges shared between two polygons of the same (level, type, thickness, colour) are deduped.
-4. Inside a single Revit transaction:
-   - **Deletes only walls previously imported by the plug-in** (tagged with `BIMy import` in instance Comments). User-drawn walls and walls from other add-ins are left alone.
-   - **Creates missing levels** from the payload's per-floor heights, stacking each floor on top of the previous one, and auto-creates a floor plan view named `Plan - Level <N>` per level.
-   - **Resolves wall types** keyed by `(typeName, thicknessMm, colorHex)`. Each unique combination becomes a single-layer `Basic Wall` type of the requested thickness and colour. Imported types are branded via Type Comments = `BIMy import` so users can spot / schedule them.
-   - **Creates the walls** with `Wall.Create`, sets `Location Line = Finish Face: Exterior` so the polygon edge matches the visible face (not the wall centerline), and where geometry fits sets the top constraint to the next level up so multi-story stacks clean up when levels move.
-   - **Tags every created wall** with instance Comments = `BIMy import <projectId>`.
-   - **Un-crops newly created floor plans** and the active plan view so the imported building is immediately visible.
-   - **Suppresses non-blocking warnings** (overlaps, unjoined endpoints) so the import doesn't stall behind a modal dialog.
-5. After commit, zooms the active view to fit.
+**The app writes the building; Revit reads it.** There is deliberately no
+per-element creation code in this add-in.
 
-Every step is logged to `RevitWallsPlugin.log` next to the DLL.
+BIMy's own IFC generator (`frontend/src/lib/ifc/ifcGenerate.js`) already knows
+exactly what the building is — it is the same code path that powers the app's
+IFC export, complete with element types, material layers, openings, derived
+rooms and property sets. Revit's native IFC importer already knows exactly how
+to turn every one of those into a first-class Revit element.
+
+An earlier version of this plug-in sat between them: it fetched BIMy's raw
+`userObjects` and rebuilt the geometry with `Wall.Create`, `Floor.Create`,
+compound structures, level stacks and so on — around 2 400 lines of it. That is
+a *second* authority for what a building is, and it drifted from the first with
+every feature the app shipped: doors and windows never arrived, materials were
+dropped, ceilings were approximations. Deleting it in favour of the IFC the app
+already generates removed the drift permanently. Anything BIMy learns to draw
+arrives in Revit with no plug-in release.
+
+What this add-in owns is everything *around* that conversion, which is where a
+pull actually goes wrong in practice:
+
+- finding the right project without making you copy a 24-character id,
+- not re-downloading and re-converting a model nobody republished,
+- never silently overwriting a `.rvt` you have since edited in Revit,
+- putting the result somewhere you can find it again,
+- and saying plainly what came across.
+
+---
+
+## The round trip
+
+```
+   BIMy web app                    BIMy API                     Revit
+ ┌──────────────┐          ┌──────────────────────┐      ┌──────────────────┐
+ │ Export to    │  PUT     │ /api/export/         │      │ Load from BIMy   │
+ │ Revit        ├─────────►│   revit-ifc/:project ├─────►│                  │
+ │              │  IFC4    │                      │ GET  │  ├ download      │
+ │ ifcGenerate  │  STEP    │  GridFS: revitExport │ IFC  │  ├ OpenIFCDocument│
+ │ .js          │          │  one blob / project  │      │  ├ SaveAs .rvt   │
+ └──────────────┘          └──────────────────────┘      │  └ open or link  │
+                                                          └──────────────────┘
+```
+
+1. In BIMy: **Export to Revit** (command palette, or the Project menu). The
+   client generates the IFC and `PUT`s it to the API, which stores one blob per
+   project in a dedicated `revitExport` GridFS bucket — a published snapshot,
+   last-write-wins.
+2. In Revit: **Load from BIMy**, pick the project, and the add-in `GET`s those
+   bytes, runs them through Revit's IFC importer with parametric intent, and
+   saves the result as a native `.rvt`.
+
+Re-exporting in BIMy and re-pulling in Revit is the update path. The pull is
+conditional (`If-None-Match`), so pulling a project that hasn't been re-exported
+costs one round trip and offers you the copy you already have.
 
 ---
 
 ## Commands
 
-The add-in adds a **BIMy** ribbon panel on the **Add-Ins** tab.
+### Load from BIMy
 
-### Connect BIMy ▾ → Set API token…
+Disabled until a session has been verified. Opens the **project picker**:
 
-Opens a WPF dialog with an **Environment** dropdown, an **API token** field, and the helper line "Workspace admin can issue API keys." Picking a value and clicking **Connect** calls `GET <env>/api/auth` with `Authorization: Bearer <token>`; on success the token is stored locally (DPAPI-encrypted, current Windows user only) along with the chosen environment. The environment is **locked** on subsequent edits — disconnect to switch environments.
+- your workspace's projects, by name and emoji, newest first;
+- a **READY** / **NOT EXPORTED** badge per project, from the publish index, so
+  you can see which models are actually pullable before clicking;
+- when each was exported, and when this machine last pulled it;
+- a search box, and **Open in BIMy ↗** for the selected project;
+- a paste field for a project id or any BIMy URL, for projects the list can't
+  cover;
+- a choice of **Open as a new Revit project** or **Link into the open project**
+  (the latter enabled only when a document is open).
 
-Supported environments:
+### Set API token…
 
-| Name | Base URL |
+Environment dropdown + token field. Verifies against `GET {env}/api/auth` with
+`Authorization: Bearer <token>`; on success the token is stored DPAPI-encrypted
+for the current Windows account only. The environment is locked while a session
+exists — disconnect to change it.
+
+| Environment | Base URL |
 | --- | --- |
 | Production *(default)* | `https://bimy.app` |
 | Sandbox | `https://sandbox.bimy.dev` |
 | Staging | `https://staging.bimy.dev` |
 | Demo | `https://demo.bimy.app` |
 
-### Connect BIMy ▾ → Disconnect
+Generate tokens in BIMy under **Settings → API tokens**.
 
-Confirms, deletes the saved session file, and clears in-memory state. The Load button greys out again.
+### Disconnect
 
-### Load from BIMy
+Confirms, deletes the saved session, clears in-memory state. Load greys out.
 
-Disabled until a session has been verified. Opens a **Project ID** prompt (prefilled with the last ID used for the currently-connected environment). The ID may be pasted as:
+### Status & log
 
-- a bare 24-character hex string (standard MongoDB ObjectId), or
-- any BIMy URL containing `…/api/data/<projectId>` — the ID is extracted automatically.
+Who is connected, to which environment, the add-in version, the Revit version,
+and the log path — plus buttons to open the log file or the data folder. This is
+the first thing to ask for when a user reports a problem.
 
-The plug-in builds `{envBaseUrl}/api/data/{projectId}?model=Project` and sends the request with the saved bearer token. Everything past the fetch (transaction, walls, levels, summary) goes through `Services/ImportRunner`.
+---
+
+## Pulling a model
+
+1. **Add-Ins → BIMy → Set API token…** (once).
+2. In the BIMy web app, open the project and run **Export to Revit**.
+3. **Add-Ins → BIMy → Load from BIMy**, pick the project, click **Load**.
+
+What happens then:
+
+| Situation | What the add-in does |
+| --- | --- |
+| Model was republished since your last pull | Downloads it (with a progress window), converts, asks where to save if a file is already there. |
+| Nothing has changed since your last pull | Offers to open the copy you already have, or re-import from scratch. |
+| Project has never been exported to Revit | Explains that, with a link that opens the project in BIMy. |
+| You already have a `.rvt` for this project | Asks: replace it, save alongside it as `Name (2).rvt`, or choose a location. |
+| That `.rvt` is open in Revit right now | Doesn't try to replace it — saves alongside and says so. |
+| You chose **Link** | Links the converted `.rvt` into the open document in one transaction. |
+
+Models are saved to `Documents\BIMy Models\` by default, and re-pulls reuse
+whatever location you picked last for that project.
 
 ---
 
 ## Project layout
 
 ```
-RevitWallsPlugin/
-├── RevitWallsPlugin.csproj          # net8.0-windows, x64, references Revit DLLs
-├── RevitWallsPlugin.addin           # Revit add-in manifest (1 application + 3 commands)
-├── install.sh                       # Build + copy to %AppData%\Autodesk\Revit\Addins\<year>\
-├── sample.json                      # Minimal example payload (segment-DSL walls + floor/ceiling polygons)
+revit-plugin/
+├── RevitWallsPlugin.csproj      # net8.0-windows, x64, references Revit DLLs
+├── RevitWallsPlugin.addin       # dev manifest (flat Assembly path)
+├── dev-reinstall.ps1            # build → reinstall → relaunch Revit (see below)
+├── build-installer.ps1          # build → package → upload Setup.exe to GCS
+├── installer/
+│   ├── BIMy.iss                 # Inno Setup script (multi-year deployment)
+│   └── BIMy.addin.template      # shipped manifest (bundled BIMy\ layout)
 │
 ├── Commands/
-│   ├── BimyApplication.cs           # IExternalApplication: builds the ribbon, warms up session
-│   ├── SetApiTokenCommand.cs        # Dialog → BimyApi.VerifyAsync → SessionStore.Save
-│   ├── DisconnectCommand.cs         # Confirms then clears persisted + in-memory session
-│   ├── LoadFromBimyCommand.cs       # Project-ID prompt → ImportRunner with bearer token
-│   └── LoadFromBimyAvailability.cs  # IExternalCommandAvailability for the Load button
+│   ├── BimyApplication.cs       # IExternalApplication: ribbon + session warm-up
+│   ├── LoadFromBimyCommand.cs   # list projects → picker → importer
+│   ├── LoadFromBimyAvailability.cs
+│   ├── SetApiTokenCommand.cs    # dialog → BimyApi.VerifyAsync → SessionStore
+│   ├── DisconnectCommand.cs
+│   ├── DisconnectAvailability.cs
+│   └── BimyStatusCommand.cs     # connection / version / log diagnostics
 │
 ├── Models/
-│   ├── BimyEnvironment.cs           # Environment enum + base URLs + ProjectDataUrl()
-│   ├── AuthDtos.cs                  # AuthResponse / BimyUser
-│   ├── ProjectDtos.cs               # UserObjectsPayload / UserObjectDto / FloorTypeDto
-│   └── WallDtos.cs                  # Internal WallDto used by the pipeline
+│   ├── BimyEnvironment.cs       # environments + every URL the add-in calls
+│   ├── AuthDtos.cs              # BimyUser
+│   └── ProjectDtos.cs           # BimyProject, BimyPublishedModel
 │
 ├── Services/
-│   ├── ImportRunner.cs              # Orchestrates the full import pipeline (projectId-aware)
-│   ├── JsonFetcher.cs               # Generic HTTP → deserialised T (bearer optional)
-│   ├── BimyApi.cs                   # VerifyAsync + FetchUserObjectsAsync (bearer required)
-│   ├── Session.cs                   # SessionStore (DPAPI-encrypted JSON next to DLL)
-│   ├── SessionState.cs              # In-process cache + RefreshAsync()
-│   ├── ProjectBuilder.cs            # userObjects → flat List<WallDto>: winding, merge, dedupe, centering
-│   ├── WallBuilder.cs               # Deletes imported walls, creates new ones, tags + top-constraints them
-│   ├── WallTypeProvider.cs          # Per-(name, thickness, color) single-layer wall-type factory
-│   ├── RevitLookup.cs               # Level lookups + EnsureLevels (+auto-named plan views)
-│   ├── SuppressWarningsPreprocessor.cs  # IFailuresPreprocessor for the transaction
-│   ├── ProjectIdState.cs            # Persists last Project ID per environment, next to the DLL
-│   └── Log.cs                       # Thread-safe append-only file logger
+│   ├── RevitIfcImporter.cs      # the pull: download → convert → open or link
+│   ├── TargetPath.cs            # where the .rvt lands, without clobbering work
+│   ├── PullCache.cs             # per-project ETag + local .rvt + last-pulled
+│   ├── BimyApi.cs               # auth verify, project list, publish index
+│   ├── JsonFetcher.cs           # HTTP: JSON fetch + conditional file download
+│   ├── BimyFetchException.cs    # non-2xx with the server's own message
+│   ├── BimyPaths.cs             # %LOCALAPPDATA%\BIMy — everything we write
+│   ├── BimyId.cs                # project id out of whatever was pasted
+│   ├── Session.cs               # SessionStore (DPAPI-encrypted)
+│   ├── SessionState.cs          # in-process session + RefreshAsync()
+│   └── Log.cs                   # thread-safe append-only file logger
 │
 └── UI/
-    ├── BimyRibbon.cs                # Builds the BIMy panel, pulldown, and Load button
-    ├── SetApiTokenDialog.cs         # WPF env+token dialog
-    └── ProjectIdDialog.cs           # WPF Project-ID dialog, parented to Revit; accepts bare id or URL
+    ├── BimyRibbon.cs            # panel: large Load button + stacked session items
+    ├── ProjectPickerDialog.cs   # the project list, search, badges, mode
+    ├── ProgressWindow.cs        # modal progress for the network phase
+    └── SetApiTokenDialog.cs     # environment + token
 ```
 
 ---
 
-## Data contract
+## API contract
 
-The plug-in reads the BIMy data endpoint:
+Everything the add-in calls, all with `Authorization: Bearer <token>`:
 
-```
-GET {baseUrl}/api/data/{projectId}?model=Project
-Authorization: Bearer <token>
-```
+| Call | Purpose | Required? |
+| --- | --- | --- |
+| `GET /api/auth` | Verify the token, identify the account. | Yes |
+| `GET /api/data?model=Project&sort=-_id&limit=200` | Fill the project picker. | No — falls back to the paste field |
+| `GET /api/export/revit-ifc` | Publish index: `[{ projectId, name, updatedAt, size }]`. | No — falls back to no badges |
+| `GET /api/export/revit-ifc/:projectId` | The published IFC (STEP bytes). | Yes |
 
-Response shape (only the `userObjects` field is consumed):
+The pull's response headers:
 
-```jsonc
-{
-  "_id": "…",
-  "userObjects": [
-    {
-      "floors":        [0, 0, 1, 0],       // per-floor index into `types`. Default [0].
-      "polygonPoints": /* legacy footprint, used by floor/ceiling fall-back path */,
-      "types": [
-        {
-          "name":      "Generic",
-          "height":    3,                  // floor height in METERS
-          "thickness": 0.2,                // fallback wall thickness in METERS (when a segment omits depth)
-          "color":     "#a0c4ff",          // optional hex color carried on the type
-          "walls":     [                   // segment DSL — preferred input
-            { "start": [0, 0], "end": [5, 0], "depth": 0.2, "baseline": 1,  "kind": "structural" },
-            { "start": [5, 0], "end": [5, 4], "depth": 0.2, "baseline": 1,  "kind": "structural" },
-            { "start": [3, 0], "end": [3, 4], "depth": 0.1, "baseline": 0,  "kind": "partition"  }
-          ],
-          "floor":     /* polygon — same shape as polygonPoints */,
-          "ceiling":   /* polygon — same shape as polygonPoints */
-        }
-      ]
-    }
-  ]
-}
-```
-
-### Wall segment fields
-
-| Field | Meaning |
+| Header | Use |
 | --- | --- |
-| `start`, `end` | endpoints in metres |
-| `depth` | wall thickness in metres; falls back to `type.thickness` if absent. Bucketed to the nearest 5 mm to pick a Revit `WallType`. |
-| `baseline` | `-1`/`0`/`+1` — body sits on the −normal / centred / +normal side of the line. Maps to `WALL_KEY_REF_PARAM` (Finish Face Interior / Wall Centerline / Finish Face Exterior). |
-| `kind` | optional `"structural"`/`"partition"` → `WALL_STRUCTURAL_USAGE_PARAM` (Bearing / NonBearing). |
+| `ETag` | Stored per project; replayed as `If-None-Match` so an unchanged model answers `304`. |
+| `x-ifc-name` | Suggested file name — becomes the `.rvt` name when the picker didn't supply one. |
+| `x-ifc-updated` | When the model was published. |
 
-### Legacy polygon shape
+A `404` on the pull means "not exported to Revit yet" and is a normal state, not
+an error — the add-in says so and offers to open the project in BIMy.
 
-For backwards compatibility, `types[].walls` and `obj.polygonPoints` are still accepted as polygon data (one wall per edge) when the wall array doesn't look like the segment DSL. `types[].floor` and `types[].ceiling` always use this polygon shape:
-
-| Shape | Meaning |
-| --- | --- |
-| `[]` or `null` | nothing |
-| `[{x,y}, {x,y}, ...]` | a single flat ring (legacy format) |
-| `[[{x,y}, {x,y}, ...], ...]` | array of simple rings (one outer ring per polygon) |
-| `[[[{x,y}, ...], [{x,y}, ...], ...], ...]` | array of `[outer, hole1, hole2, …]` polygons — holes **are** materialised as walls |
-
-### Units
-
-- Wall `start`/`end`, polygon `x`/`y`, and `depth` are in **meters** (matches the upstream editor).
-- `types[].height`, `types[].thickness` are in **meters**.
-- The plug-in multiplies all inputs by 1000 to produce its internal millimetre representation and then converts to Revit internal units (feet) at wall-creation time.
-
-### Why raw userObjects, not pre-processed walls
-
-An earlier iteration had the API return `{ units, walls: [...] }` already expanded. Moving the conversion into the plug-in means any plug-in update can evolve the mapping without a backend deploy, and keeps the API boundary minimal.
+Server side lives in `api/src/export/routes/revitIfc.ts`; the publish side lives
+in `frontend/src/lib/ifc/export.js` (`exportToRevit`) and
+`frontend/src/api/revit.js`.
 
 ---
 
-## Import pipeline
+## Building and installing
 
-The single source of truth is `Services/ImportRunner.Run(UIApplication, BimyEnvironment, projectId, url, token, ref message)`.
+Prerequisites: .NET SDK 8.x, a Revit install (2022–2030) for `RevitAPI.dll`, and
+— for installer builds — [Inno Setup 6](https://jrsoftware.org/isdl.php)
+(`winget install JRSoftware.InnoSetup`).
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 1.  JsonFetcher.FetchAsync<UserObjectsPayload>(url, token)                   │
-│      → HTTP GET, 30 s timeout, deserialise (case-insensitive)                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ 2.  ProjectBuilder.BuildWalls(payload)                                      │
-│      → iterate userObjects × floors                                         │
-│      → parse polygons, normalise winding (outer CW, holes CCW)              │
-│      → merge collinear/coincident points, drop sub-mm edges                 │
-│      → emit one WallDto per edge, convert m → mm                            │
-│      → dedupe edges shared between rings (same level/type/thickness/colour) │
-│      → centre by bounding-box midpoint                                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ 3.  Transaction("Load from BIMy")                                           │
-│     │                                                                       │
-│     │  SuppressWarningsPreprocessor   # auto-dismiss non-error warnings    │
-│     │                                                                       │
-│     │  WallBuilder.CreateWalls(doc, walls, elevations, "BIMy import …")     │
-│     │   ├─ DeleteImportedWalls            # filters on instance Comments   │
-│     │   ├─ RevitLookup.EnsureLevels       # auto-create missing + plans    │
-│     │   ├─ new WallTypeProvider(doc)      # pre-caches existing BIMy types │
-│     │   └─ for each WallDto:                                                │
-│     │       ├─ typeProvider.Get(name, thickness, hex)                       │
-│     │       ├─ RevitLookup.ResolveLevel                                     │
-│     │       ├─ Wall.Create(line, typeId, levelId, heightFeet, …)            │
-│     │       ├─ set Location Line = Finish Face: Exterior                    │
-│     │       ├─ if fits: set top constraint to the next level up             │
-│     │       └─ set instance Comments = "BIMy import <projectId>"            │
-│     │                                                                       │
-│     │  UncropNewlyCreatedPlans(doc)                                         │
-│     │  DisableActiveCrop(doc)                                               │
-│     │                                                                       │
-│     │  tx.Commit()                                                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ 4.  ZoomActiveViewToFit(uiDoc)                                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ 5.  Summary dialog + log                                                    │
-└─────────────────────────────────────────────────────────────────────────────┘
+### Development loop
+
+```powershell
+# Build and copy straight into the Addins folder, then relaunch Revit. Seconds.
+pwsh -File dev-reinstall.ps1 -Fast
+
+# Build, compile Setup.exe, install it silently, relaunch Revit.
+pwsh -File dev-reinstall.ps1
+
+# Same, bumping AppVersion in installer\BIMy.iss first.
+pwsh -File dev-reinstall.ps1 -Bump
 ```
 
-Notes:
+`dev-reinstall.ps1` closes Revit first (it locks the DLL — this is the failure
+that silently leaves you testing the previous build), asks before doing so
+unless `-Force`, verifies what actually landed on disk, and relaunches Revit if
+it was running. It never uploads anything.
 
-- **HTTP happens before the transaction opens.** If the fetch is slow or fails, Revit state is untouched.
-- **One transaction encapsulates deletion + level/view creation + wall creation + crop toggle.** If anything throws, the entire import rolls back — no half-imported building.
-- **Delete step is scoped.** Only walls whose instance Comments start with `BIMy import` are removed. Walls drawn by the user or other add-ins survive re-imports.
-- **Zoom-to-fit is outside the transaction** and targets only the active view (no longer re-frames every open viewport).
+Other flags: `-RevitVersion 2025`, `-AllUsers`, `-NoRestart`,
+`-Configuration Debug` (with `-Fast`).
 
----
+### Release
 
-## Wall types and thickness
+```powershell
+pwsh -File build-installer.ps1        # build + package + upload to GCS
+pwsh -File build-installer.ps1 -SkipUpload
+```
 
-`Services/WallTypeProvider` resolves walls to a Revit `WallType` bucketed by structural-layer thickness:
+Or build by hand:
 
-1. At construction, it picks one **fallback wall type** — first the project's "Concrete - 12\"" variant, then any "Concrete*" basic wall ≈ 12" wide, then the project's default basic wall type, then any basic wall as a last resort.
-2. On the first wall in a given **5 mm thickness bucket**, the fallback is `Duplicate`-d, named `BIMy Wall <NNN> mm`, and its core (or widest) compound-structure layer is rewritten via `CompoundStructure.SetLayerWidth`.
-3. The duplicated type is cached, so a project with three distinct wall depths produces three wall types — not three per instance.
-
-If the fallback already matches the bucket (within ±0.6"), it's reused verbatim — no degenerate `Concrete - 12" → Concrete - 12" (1)` clones.
-
-Templates that lock layer widths (some content libraries do) gracefully fall back to using the fallback type's native thickness; the wall still imports.
-
-Instance branding stays in `ALL_MODEL_INSTANCE_COMMENTS = "BIMy import <projectId>"` so re-imports replace only previously-imported walls.
-
-Color is currently a **type-level** field on the editor side and is **not** materialised on imported wall types — paint and material mapping live on the build TODO list (see Extending the plug-in).
-
----
-
-## Wall orientation and baseline
-
-Revit's wall orientation with `flip=false` is `Z × curveDirection`, which puts the **exterior face on the LEFT of the curve direction**. The editor's normal is the opposite — `(dir.y, −dir.x)` = RIGHT of direction — which lines up with Revit's **interior side**.
-
-`WallBuilder` maps the segment DSL's `baseline` into `WALL_KEY_REF_PARAM`:
-
-| `baseline` | Body sits on… | Location line lands on… | `WallLocationLine`     |
-| ---------- | ------------- | ----------------------- | ---------------------- |
-| `+1`       | interior side | exterior face           | `FinishFaceExterior`   |
-|  `0`       | centred       | centreline              | `WallCenterline`       |
-| `-1`       | exterior side | interior face           | `FinishFaceInterior`   |
-
-Legacy polygon-derived walls go through `ProjectBuilder` with their winding pre-normalised (outer CW, holes CCW) and `Baseline` forced to `+1`, which reproduces the pre-1.1 behaviour of always anchoring to the exterior face.
-
----
-
-## Levels
-
-`RevitLookup.EnsureLevels(doc, referencedNames, elevationsMm)` runs inside the transaction.
-
-1. Builds a map of existing levels by name (case-insensitive).
-2. For each `Level <N>` referenced by the import, creates the level at the cumulative elevation computed by `ProjectBuilder.ComputeLevelElevations` (tallest floor per index wins when user objects disagree).
-3. Existing `Level <N>` levels are **re-elevated** to the computed value, so imports stay geometrically consistent when floor heights change.
-4. Any other referenced names with no elevation are stacked above the current highest level with a 3 m default spacing.
-5. Each newly-created level gets a floor plan view named `Plan - <levelName>`.
-
-Non-`Level <N>` level names encountered on existing levels are **not** re-elevated — the plug-in assumes those were placed by the user.
-
----
-
-## Viewport handling
-
-Each import run, inside the transaction:
-
-- Floor plans for every level created in this run have their crop box switched off.
-- If the active view is a `ViewPlan` with `CropBoxActive == true`, it's switched off too.
-
-After commit, outside the transaction:
-
-- Only the active view is `ZoomToFit`-ed. Other open viewports keep their framing.
-
----
-
-## Building
-
-Prerequisites:
-
-- .NET SDK 8.x (`dotnet --version`).
-- Revit 2025 installed at `C:\Program Files\Autodesk\Revit 2025\` (for `RevitAPI.dll`, `RevitAPIUI.dll`).
-
-```bash
-# Revit 2025 (default)
-dotnet build -c Release
-
-# Revit 2026
+```powershell
 dotnet build -c Release -p:RevitVersion=2026
-
-# Pointing at a non-standard install path
-dotnet build -c Release '-p:RevitInstallDir=D:\CustomPath\Revit 2025\'
 ```
 
-Target framework is `net8.0-windows`, platform `x64`, `UseWPF=true`.
+### What the installer does
 
-Output ends up in `bin/Release/` as `RevitWallsPlugin.dll` plus the `.addin` manifest (copied via `CopyToOutputDirectory`).
+Deploys the bundled layout Autodesk recommends, into **every** detected Revit
+year at once:
 
----
-
-## Installing into Revit
-
-Run `install.sh` (Git Bash):
-
-```bash
-./install.sh           # Revit 2025 (default)
-./install.sh 2026      # a different year
-./install.sh 2025 --no-restart   # don't relaunch Revit afterwards
+```
+%AppData%\Autodesk\Revit\Addins\<year>\BIMy.addin        <- manifest
+%AppData%\Autodesk\Revit\Addins\<year>\BIMy\*.dll        <- payload
 ```
 
-What it does:
-
-1. Verifies `C:\Program Files\Autodesk\Revit <year>\RevitAPI.dll` exists.
-2. Detects whether Revit is running; if so, `taskkill Revit.exe` and waits up to 10 s.
-3. `dotnet build -c Release -p:RevitVersion=<year>`.
-4. Copies `RevitWallsPlugin.dll` and `RevitWallsPlugin.addin` to `%AppData%\Autodesk\Revit\Addins\<year>\`.
-5. Relaunches Revit if it was running when the script started.
-
-Manual install: copy the two files from `bin\Release\` to `%AppData%\Autodesk\Revit\Addins\2025\`, then launch Revit. On first load Revit shows a security prompt for unsigned add-ins — click **Always Load**.
-
----
-
-## Usage
-
-1. Open any Revit project (a Metric Architectural template works well).
-2. **Add-Ins → BIMy → Connect BIMy → Set API token…**. Pick the environment, paste the API token, click **Connect**.
-3. **Add-Ins → BIMy → Load from BIMy**. Paste the Project ID (or a full URL — the ID is extracted) and click OK.
-4. After the import:
-   - The summary dialog reports walls created, walls replaced, auto-created levels, auto-created wall types.
-   - **Project Browser → Floor Plans** has `Plan - Level 1 … Plan - Level <N>` for every floor.
-5. Re-running **Load from BIMy** for the same project ID replaces only the previously-imported walls; user-drawn walls survive.
+Per-user by default (no admin, no UAC); run it elevated and it also writes the
+machine-wide `%ProgramData%` copy. Uninstall from Start → BIMy for Revit, or
+Add/Remove Programs.
 
 ---
 
 ## State and persistence
 
-Files live next to the DLL (`%AppData%\Autodesk\Revit\Addins\2025\`):
+Everything the add-in writes lives in **`%LOCALAPPDATA%\BIMy\`** — *not* next to
+the DLL, because a machine-wide install puts the DLL somewhere the user cannot
+write, and because a plug-in update replaces that folder (which used to sign
+people out).
 
-| File | Purpose |
+| Path | Purpose |
 | --- | --- |
-| `RevitWallsPlugin.session.json` | Saved environment + DPAPI-encrypted API token. Encrypted with `DataProtectionScope.CurrentUser` — only the same Windows user can decrypt it. |
-| `RevitWallsPlugin.lastProjectId.<env>.txt` | Last Project ID used, kept per environment so switching env doesn't surface a stale ID. |
-| `RevitWallsPlugin.log` | Append-only run log. Never auto-truncated. |
+| `session.json` | Environment + DPAPI-encrypted API token (current Windows user only). Migrated automatically from the old next-to-the-DLL location. |
+| `pulls.json` | Per environment + project: last ETag, publish time, the `.rvt` path, and when it was pulled. |
+| `models\<projectId>\model.ifc` | The downloaded IFC. Scratch — safe to delete. |
+| `bimy.log` | Append-only run log. Never auto-truncated. |
 
-All are best-effort — `Services/SessionStore`, `Services/ProjectIdState`, and `Services/Log` swallow I/O exceptions so persistence failures can never crash the command.
+Pulled Revit files go to `Documents\BIMy Models\` unless you choose otherwise.
 
----
-
-## Logging
-
-`Services/Log` appends lines like:
-
-```
-2026-04-22 18:55:12.318 [INFO ] ---- Import run invoked ----
-2026-04-22 18:55:14.227 [INFO ] Fetching userObjects from Staging · project 65f… (https://staging.bimy.dev/api/data/65f…?model=Project)
-2026-04-22 18:55:14.527 [INFO ] Fetched 3 userObject(s).
-2026-04-22 18:55:14.551 [INFO ] Built 60 wall definition(s) across 10 level(s) from 3 userObject(s).
-2026-04-22 18:55:14.551 [INFO ] Creating walls…
-2026-04-22 18:55:15.173 [INFO ] Build pass finished. Created(in-memory)=60, Skipped=0. Committing…
-2026-04-22 18:55:15.326 [INFO ] Transaction committed. Deleted=60, Created=60, Skipped=0.
-2026-04-22 18:55:15.327 [INFO ] Auto-created levels: Level 3, Level 4, Level 5, Level 6, Level 7, Level 8, Level 9, Level 10
-2026-04-22 18:55:15.327 [INFO ] Auto-created wall types: Generic 200mm
-2026-04-22 18:55:15.342 [INFO ] Disabled crop box on active view 'Plan - Level 1'.
-2026-04-22 18:55:15.420 [INFO ] Zoomed active view to fit.
-```
-
-Tail live from PowerShell:
+Tail the log:
 
 ```powershell
-Get-Content "$env:APPDATA\Autodesk\Revit\Addins\2025\RevitWallsPlugin.log" -Wait -Tail 50
+Get-Content "$env:LOCALAPPDATA\BIMy\bimy.log" -Wait -Tail 50
 ```
 
 ---
 
 ## Troubleshooting
 
-**Walls are created but invisible.**
-Run `ZF` (Zoom to Fit) in the active view. Check that the active view is a plan view for a level that was in the payload (e.g. `Plan - Level 1`). In 3D views walls always show.
+**"Load from BIMy" is greyed out.**
+No verified session. **Set API token…**, then check **Status & log**.
 
-**Load from BIMy is greyed out.**
-No verified session. Run **Connect BIMy → Set API token…**. Tail the log to see verify errors.
+**"This project hasn't been exported to Revit yet".**
+Nobody has run **Export to Revit** in the web app for that project. The dialog
+offers a link straight to it.
 
-**"Please enter a 24-character hex project ID" in the Load dialog.**
-The pasted string isn't recognised as an ID or a BIMy URL containing one. Valid forms: a bare 24-char hex, or any URL with `/api/data/<24hex>` in it.
+**"Your BIMy session was rejected".**
+The token is wrong, revoked, or belongs to a different environment. Generate a
+fresh one in **Settings → API tokens** and re-connect, matching the environment
+to the host you use in the browser.
 
-**"Token rejected" after Set API token.**
-Token wrong or wrong environment. Workspace admin can issue a new key. Use Disconnect to switch environments.
+**The project list is empty.**
+The token's workspace has no projects, or `/api/data` refused it. Paste the
+project id instead — the pull itself doesn't depend on the list.
 
-**Walls face the wrong way.**
-For segment-based input, the body offset comes from each wall's `baseline`. If the editor exported a wall with the wrong `baseline` sign, the body lands on the opposite side. Select the wall and press space to flip; or fix `baseline` upstream. Legacy polygon input may still wind inconsistently — `ProjectBuilder` normalises outer rings to CW and holes to CCW, but mixed-convention sources can still produce a flipped wall.
+**The picker shows no READY / NOT EXPORTED badges.**
+The deployment predates `GET /api/export/revit-ifc`. Harmless; pulls still work.
 
-**Wall thickness is wrong after import.**
-For segments, `depth` (metres) wins, falling back to `type.thickness` (metres) when absent. Both are bucketed to 5 mm before picking a Revit wall type. A value of `200` produces 200 m walls — check that the source is in metres, not millimetres.
+**Revit asks about unsigned add-ins on first load.**
+Expected until the installer is code-signed. Click **Always Load**.
 
-**Import hangs mid-run.**
-Usually a Revit modal warning that `SuppressWarningsPreprocessor` didn't catch. Check the log for "Transaction failed". Alt+Tab to surface any hidden dialog.
+**Two BIMy panels on the ribbon.**
+Both a flat `RevitWallsPlugin.addin` (from the legacy `install.sh`) and the
+installer's `BIMy.addin` are registered in the same year folder. Delete the flat
+one, or uninstall and re-run `dev-reinstall.ps1`.
 
 **MSBuild warning MSB3277 about version conflicts.**
 Expected and benign — Revit's DLL graph drags in multi-version references.
 
 ---
 
-## Extending the plug-in
+## Extending
 
-Common additions, and where they'd hook in:
-
-| Need | Change |
+| Need | Where |
 | --- | --- |
-| Support a new JSON shape | Extend DTOs in `Models/ProjectDtos.cs` and parsing in `Services/ProjectBuilder.cs`. |
-| Add doors / windows / slabs | New DTO + new `Services/Xxx Builder.cs`; wire from `WallBuilder.CreateWalls` or a new runner stage. |
-| Multi-layer wall types | Replace `ApplySingleLayer` in `Services/WallTypeProvider.cs` with a `CompoundStructure.CreateCompoundStructure(layers)` call. |
-| Don't delete previously-imported walls | Skip the `DeleteImportedWalls(doc)` call in `WallBuilder.CreateWalls`. |
-| Don't auto-create plan views | Remove the `ViewPlan.Create` call in `RevitLookup.EnsureLevels`. |
-| Import from a non-BIMy source | Replace `BimyApi.FetchUserObjectsAsync` with another fetcher; keep the same `UserObjectsPayload` shape so the rest of the pipeline works unchanged. |
+| A new element kind in Revit | **Not here.** Teach `frontend/src/lib/ifc/ifcGenerate.js` to write it; the importer picks it up with no plug-in change. |
+| Better Revit material names | `frontend/src/lib/ifc/revitBridge.js` — the canonical → Revit template name map. |
+| Import options (link vs open, intent, auto-join) | `Services/RevitIfcImporter.ConvertToRevit`. |
+| Different save behaviour | `Services/TargetPath`. |
+| More columns / filters in the picker | `UI/ProjectPickerDialog` + `Models/ProjectDtos`. |
+| A new endpoint | `Models/BimyEnvironment` (URL) + `Services/BimyApi` (call). |
 
-Each `Services/*.cs` file is scoped to one responsibility (fetching, building, creating, looking up, logging, persisting) so most extensions touch one or two files.
+The rule that keeps this small: **the app decides what a building is; the
+plug-in decides how it arrives.** Anything geometric belongs upstream.

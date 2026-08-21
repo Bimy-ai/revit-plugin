@@ -1,5 +1,14 @@
 # Revit API parameter reference (BIMy plug-in)
 
+> **Historical.** This documents the retired native-geometry import, where the
+> plug-in built walls, floors and ceilings itself. That path is gone: the add-in
+> now pulls the IFC the app generates and lets Revit's own importer create the
+> elements (see README → *How it works*). Files referenced below —
+> `Services/ParamSet.cs`, `WallTypeProvider.cs`, `RevitLookup.cs` — no longer
+> exist. Kept because the parameter tables are still the fastest lookup if
+> element-level manipulation is ever added back.
+
+
 Quick-pick reference for the parameters this plug-in actually reads/writes plus the most common adjacent ones you're likely to want when extending the import. Not a full dump of `BuiltInParameter` — the enum has thousands of entries; this is the practical subset for walls, floors, ceilings, levels, views, and materials.
 
 ---

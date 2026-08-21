@@ -40,6 +40,31 @@ public static class BimyEnvironments
 
     public static string AuthUrl(BimyEnvironment env) => BaseUrl(env) + "/api/auth";
 
-    public static string ProjectDataUrl(BimyEnvironment env, string projectId)
-        => $"{BaseUrl(env)}/api/data/{projectId}?model=Project";
+    /// <summary>
+    /// The project's published Revit model: the faithful IFC the BIMy app writes
+    /// on "Export to Revit" (walls, floors, ceilings, doors, windows, openings,
+    /// spaces, materials, property sets). Pulled by the plugin and opened natively.
+    /// </summary>
+    public static string RevitIfcUrl(BimyEnvironment env, string projectId)
+        => $"{BaseUrl(env)}/api/export/revit-ifc/{projectId}";
+
+    /// <summary>
+    /// The publish index — which projects have been exported to Revit, and when.
+    /// Optional: deployments older than this endpoint answer 404 and the picker
+    /// just shows no "published" badges.
+    /// </summary>
+    public static string RevitIfcIndexUrl(BimyEnvironment env)
+        => $"{BaseUrl(env)}/api/export/revit-ifc";
+
+    /// <summary>
+    /// The workspace's projects, newest first, through the generic CRUD list
+    /// every deployment serves. Used to fill the picker with real names instead
+    /// of asking the user to paste a 24-character id.
+    /// </summary>
+    public static string ProjectsUrl(BimyEnvironment env, int limit = 200)
+        => $"{BaseUrl(env)}/api/data?model=Project&sort=-_id&limit={limit}";
+
+    /// <summary>The project's page in the BIMy web app — for "Open in BIMy".</summary>
+    public static string ProjectWebUrl(BimyEnvironment env, string projectId)
+        => $"{BaseUrl(env)}/projects/{projectId}";
 }

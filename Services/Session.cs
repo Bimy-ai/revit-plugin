@@ -87,11 +87,32 @@ internal static class SessionStore
         }
     }
 
+    // %LOCALAPPDATA%\BIMy\session.json. Older builds kept this next to the DLL,
+    // which meant a plugin UPDATE (the installer replaces that folder) signed the
+    // user out. If the new file doesn't exist yet but an old one does, move it
+    // across once — the DPAPI blob is bound to the Windows user, not the path,
+    // so it still decrypts.
     private static string ResolvePath()
     {
-        var dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
-                  ?? AppContext.BaseDirectory;
-        return Path.Combine(dir, "RevitWallsPlugin.session.json");
+        var path = BimyPaths.SessionFile;
+        try
+        {
+            if (!File.Exists(path))
+            {
+                var legacyDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                var legacy = legacyDir is null ? null : Path.Combine(legacyDir, "RevitWallsPlugin.session.json");
+                if (legacy is not null && File.Exists(legacy))
+                {
+                    File.Copy(legacy, path, overwrite: false);
+                    Log.Info($"Migrated saved session from {legacy}.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Session migration skipped: {ex.GetType().Name}: {ex.Message}");
+        }
+        return path;
     }
 
     private sealed class PersistedSession

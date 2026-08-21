@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.IO;
-using System.Reflection;
 
 namespace RevitWallsPlugin.Services;
 
@@ -32,10 +31,6 @@ internal static class Log
         }
     }
 
-    private static string ResolveLogPath()
-    {
-        var dir = System.IO.Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
-                  ?? AppContext.BaseDirectory;
-        return System.IO.Path.Combine(dir, "RevitWallsPlugin.log");
-    }
+    // %LOCALAPPDATA%\BIMy\bimy.log — see BimyPaths for why not next to the DLL.
+    private static string ResolveLogPath() => BimyPaths.LogFile;
 }
