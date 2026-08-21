@@ -4,7 +4,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
 
-namespace RevitWallsPlugin.Services;
+namespace BimyRevit.Services;
 
 internal static class JsonFetcher
 {

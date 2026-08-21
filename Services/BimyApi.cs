@@ -1,9 +1,9 @@
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
-using RevitWallsPlugin.Models;
+using BimyRevit.Models;
 
-namespace RevitWallsPlugin.Services;
+namespace BimyRevit.Services;
 
 internal static class BimyApi
 {

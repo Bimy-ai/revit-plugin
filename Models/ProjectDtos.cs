@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace RevitWallsPlugin.Models;
+namespace BimyRevit.Models;
 
 /// <summary>
 /// One row of the project picker. Read from <c>GET /api/data?model=Project</c>

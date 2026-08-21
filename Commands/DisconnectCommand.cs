@@ -1,9 +1,9 @@
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
-using RevitWallsPlugin.Services;
+using BimyRevit.Services;
 
-namespace RevitWallsPlugin.Commands;
+namespace BimyRevit.Commands;
 
 [Transaction(TransactionMode.ReadOnly)]
 [Regeneration(RegenerationOption.Manual)]

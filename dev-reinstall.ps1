@@ -125,12 +125,12 @@ if ($revitWasRunning) {
 }
 
 # ─── Build ───────────────────────────────────────────────────────────────────
-Write-Step "Building RevitWallsPlugin ($Configuration, Revit $RevitVersion)"
+Write-Step "Building BimyRevit ($Configuration, Revit $RevitVersion)"
 & dotnet build -c $Configuration -p:RevitVersion=$RevitVersion --disable-build-servers -nologo
 if ($LASTEXITCODE -ne 0) { Write-Error "Build failed (dotnet exit $LASTEXITCODE)."; exit 1 }
 
 $BinDir = Join-Path $ScriptDir "bin\$Configuration"
-$Dll = Join-Path $BinDir 'RevitWallsPlugin.dll'
+$Dll = Join-Path $BinDir 'BimyRevit.dll'
 if (-not (Test-Path $Dll)) { Write-Error "Build produced no DLL at $Dll."; exit 1 }
 
 # ─── Deploy ──────────────────────────────────────────────────────────────────
@@ -150,7 +150,7 @@ if ($Fast) {
         $pluginDir = Join-Path $root 'BIMy'
         try {
             New-Item -ItemType Directory -Force -Path $pluginDir | Out-Null
-            foreach ($name in 'RevitWallsPlugin.dll', 'RevitWallsPlugin.deps.json', 'RevitWallsPlugin.pdb') {
+            foreach ($name in 'BimyRevit.dll', 'BimyRevit.deps.json', 'BimyRevit.pdb') {
                 $src = Join-Path $BinDir $name
                 if (Test-Path $src) { Copy-Item $src -Destination $pluginDir -Force }
             }
@@ -221,7 +221,7 @@ if ($Fast) {
 # Deployment can "succeed" and still leave Revit loading yesterday's DLL, so
 # check what actually landed rather than trusting the copy.
 Write-Step 'Verifying'
-$installed = Join-Path "$env:APPDATA\Autodesk\Revit\Addins\$RevitVersion\BIMy" 'RevitWallsPlugin.dll'
+$installed = Join-Path "$env:APPDATA\Autodesk\Revit\Addins\$RevitVersion\BIMy" 'BimyRevit.dll'
 if (Test-Path $installed) {
     $built = (Get-Item $Dll).LastWriteTimeUtc
     $live = (Get-Item $installed).LastWriteTimeUtc

@@ -12,8 +12,8 @@
     <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <AssemblyName>RevitWallsPlugin</AssemblyName>
-    <RootNamespace>RevitWallsPlugin</RootNamespace>
+    <AssemblyName>BimyRevit</AssemblyName>
+    <RootNamespace>BimyRevit</RootNamespace>
   </PropertyGroup>
 
   <!-- Revit install root. Override on the command line with:
@@ -56,12 +56,6 @@
     <!-- ProtectedData (DPAPI). Already shipped in the .NET 8 WindowsDesktop runtime that Revit hosts,
          so no DLL is copied to the output - the package reference exists for compile-time resolution. -->
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Update="RevitWallsPlugin.addin">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
   </ItemGroup>
 
   <!-- Ribbon icon. Single PNG source embedded into the DLL (read back at

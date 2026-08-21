@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace RevitWallsPlugin.Services;
+namespace BimyRevit.Services;
 
 /// <summary>
 /// Recovers a BIMy project id from whatever the user pasted. People copy the

@@ -4,10 +4,10 @@ using System.Reflection;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
-using RevitWallsPlugin.Models;
-using RevitWallsPlugin.Services;
+using BimyRevit.Models;
+using BimyRevit.Services;
 
-namespace RevitWallsPlugin.Commands;
+namespace BimyRevit.Commands;
 
 /// <summary>
 /// Everything a support conversation needs, in one dialog: who is connected,

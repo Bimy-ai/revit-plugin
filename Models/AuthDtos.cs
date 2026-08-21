@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace RevitWallsPlugin.Models;
+namespace BimyRevit.Models;
 
 public sealed class BimyUser
 {

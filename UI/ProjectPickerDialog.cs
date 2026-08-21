@@ -9,10 +9,10 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Markup;
 using System.Windows.Media;
-using RevitWallsPlugin.Models;
-using RevitWallsPlugin.Services;
+using BimyRevit.Models;
+using BimyRevit.Services;
 
-namespace RevitWallsPlugin.UI;
+namespace BimyRevit.UI;
 
 /// <summary>How the pulled model should land in Revit.</summary>
 internal enum PullMode

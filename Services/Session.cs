@@ -4,9 +4,9 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using RevitWallsPlugin.Models;
+using BimyRevit.Models;
 
-namespace RevitWallsPlugin.Services;
+namespace BimyRevit.Services;
 
 internal sealed class Session
 {
@@ -17,6 +17,9 @@ internal sealed class Session
 internal static class SessionStore
 {
     private static readonly string _path = ResolvePath();
+    // DPAPI entropy. This string is part of the on-disk format, not the assembly
+    // name: change it and every already-saved token becomes undecryptable, which
+    // silently signs everyone out on upgrade. It keeps its pre-rename value.
     private static readonly byte[] _entropy = Encoding.UTF8.GetBytes("RevitWallsPlugin.session.v1");
 
     private static readonly JsonSerializerOptions _json = new()
@@ -100,6 +103,9 @@ internal static class SessionStore
             if (!File.Exists(path))
             {
                 var legacyDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                // Historical name, from when the session lived next to the DLL
+                // and the assembly was still called RevitWallsPlugin. Kept
+                // verbatim so upgrades from those builds still find it.
                 var legacy = legacyDir is null ? null : Path.Combine(legacyDir, "RevitWallsPlugin.session.json");
                 if (legacy is not null && File.Exists(legacy))
                 {

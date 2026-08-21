@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.IO;
 
-namespace RevitWallsPlugin.Services;
+namespace BimyRevit.Services;
 
 internal static class Log
 {

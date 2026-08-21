@@ -1,9 +1,9 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using RevitWallsPlugin.Models;
+using BimyRevit.Models;
 
-namespace RevitWallsPlugin.Services;
+namespace BimyRevit.Services;
 
 /// <summary>
 /// What this machine already pulled, per environment + project: the published

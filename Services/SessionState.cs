@@ -1,6 +1,6 @@
-using RevitWallsPlugin.Models;
+using BimyRevit.Models;
 
-namespace RevitWallsPlugin.Services;
+namespace BimyRevit.Services;
 
 internal static class SessionState
 {

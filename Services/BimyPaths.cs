@@ -1,6 +1,6 @@
 using System.IO;
 
-namespace RevitWallsPlugin.Services;
+namespace BimyRevit.Services;
 
 /// <summary>
 /// Where the add-in keeps everything it writes.

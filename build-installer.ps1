@@ -6,10 +6,10 @@
 .DESCRIPTION
   Native PowerShell implementation of the build+package+upload pipeline.
 
-  Why PowerShell and not the bash script: when build-installer.sh runs under
-  Git Bash (MSYS), every native command it shells out to — dotnet, ISCC, and
-  especially the openssl/curl/awk/sed swarm used to sign the GCS JWT — is a
-  fresh Win32 process. On some machines MSYS fork() intermittently fails with
+  Why PowerShell and not a shell script (which is what this used to be): under
+  Git Bash (MSYS), every native command such a script shells out to — dotnet,
+  ISCC, and especially the openssl/curl/awk/sed swarm needed to sign the GCS
+  JWT — is a fresh Win32 process. On some machines MSYS fork() fails with
   0xC0000005 access violations, which manifests as blank, unclosable console
   windows and an apparent hang. Running everything inside ONE PowerShell
   process eliminates the fork swarm: dotnet/ISCC run as child console apps
@@ -87,7 +87,7 @@ if (-not $RevitVersion) {
 # ─── Build ─────────────────────────────────────────────────────────────────
 # --disable-build-servers keeps MSBuild / Roslyn / Razor servers from
 # outliving this script and holding the console handle.
-Write-Host "=== Building RevitWallsPlugin (Release) - targeting Revit $RevitVersion ==="
+Write-Host "=== Building BimyRevit (Release) - targeting Revit $RevitVersion ==="
 & dotnet build -c Release -p:RevitVersion=$RevitVersion --disable-build-servers
 if ($LASTEXITCODE -ne 0) { Write-Error "Build failed (dotnet exit $LASTEXITCODE)."; exit 1 }
 

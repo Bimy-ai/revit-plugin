@@ -3,7 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
 
-namespace RevitWallsPlugin.UI;
+namespace BimyRevit.UI;
 
 /// <summary>
 /// A modal "this is happening" window for the network part of a pull.

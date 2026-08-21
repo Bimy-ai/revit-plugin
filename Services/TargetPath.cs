@@ -2,7 +2,7 @@ using System.IO;
 using Autodesk.Revit.UI;
 using Microsoft.Win32;
 
-namespace RevitWallsPlugin.Services;
+namespace BimyRevit.Services;
 
 /// <summary>
 /// Decides where a pulled model's .rvt is written.

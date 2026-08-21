@@ -4,10 +4,10 @@ using System.Net;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.IFC;
 using Autodesk.Revit.UI;
-using RevitWallsPlugin.Models;
-using RevitWallsPlugin.UI;
+using BimyRevit.Models;
+using BimyRevit.UI;
 
-namespace RevitWallsPlugin.Services;
+namespace BimyRevit.Services;
 
 /// <summary>
 /// Pulls a project's published IFC from BIMy and turns it into a native Revit

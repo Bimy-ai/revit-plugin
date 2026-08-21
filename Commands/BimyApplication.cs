@@ -1,8 +1,8 @@
 using Autodesk.Revit.UI;
-using RevitWallsPlugin.Services;
-using RevitWallsPlugin.UI;
+using BimyRevit.Services;
+using BimyRevit.UI;
 
-namespace RevitWallsPlugin.Commands;
+namespace BimyRevit.Commands;
 
 public sealed class BimyApplication : IExternalApplication
 {

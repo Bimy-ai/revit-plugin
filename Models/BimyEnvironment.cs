@@ -1,4 +1,4 @@
-namespace RevitWallsPlugin.Models;
+namespace BimyRevit.Models;
 
 public enum BimyEnvironment
 {

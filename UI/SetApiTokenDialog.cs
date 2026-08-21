@@ -2,9 +2,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
-using RevitWallsPlugin.Models;
+using BimyRevit.Models;
 
-namespace RevitWallsPlugin.UI;
+namespace BimyRevit.UI;
 
 internal sealed class SetApiTokenResult
 {

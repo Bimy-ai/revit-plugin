@@ -1,6 +1,6 @@
 ; Inno Setup script — produces a Setup.exe that deploys the BIMy add-in into
-; Revit's canonical Addins folder. Build by running installer\build-installer.cmd
-; (requires Inno Setup 6 installed).
+; Revit's canonical Addins folder. Build by running build-installer.ps1 from the
+; repository root (requires Inno Setup 6 installed).
 ;
 ; How this installer works (and why it "just works" for any Revit install):
 ;
@@ -9,10 +9,10 @@
 ;      scans on startup. No registry, no environment variables, no PATH.
 ;
 ;   2. Bundled deployment pattern (recommended by Autodesk):
-;           ...\Addins\<year>\BIMy\RevitWallsPlugin.dll       <- payload
+;           ...\Addins\<year>\BIMy\BimyRevit.dll       <- payload
 ;           ...\Addins\<year>\BIMy.addin                      <- manifest
 ;      The .addin references the DLL with a RELATIVE path
-;      (<Assembly>BIMy\RevitWallsPlugin.dll</Assembly>), so the layout is
+;      (<Assembly>BIMy\BimyRevit.dll</Assembly>), so the layout is
 ;      self-contained and can be moved or copied without edits.
 ;
 ;   3. Installs per-user by default (%AppData%\Autodesk\Revit\Addins\<year>).
@@ -137,9 +137,9 @@ Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 ; Stage everything into {tmp}\payload — [Code] copies it into each detected
 ; Revit year's Addins folder at the ssPostInstall step. Using DeleteAfterInstall
 ; keeps the {app} folder tiny (just the uninstaller).
-Source: "{#SrcBin}\RevitWallsPlugin.dll";       DestDir: "{tmp}\payload"; Flags: deleteafterinstall
-Source: "{#SrcBin}\RevitWallsPlugin.deps.json"; DestDir: "{tmp}\payload"; Flags: deleteafterinstall
-Source: "{#SrcBin}\RevitWallsPlugin.pdb";       DestDir: "{tmp}\payload"; Flags: deleteafterinstall skipifsourcedoesntexist
+Source: "{#SrcBin}\BimyRevit.dll";       DestDir: "{tmp}\payload"; Flags: deleteafterinstall
+Source: "{#SrcBin}\BimyRevit.deps.json"; DestDir: "{tmp}\payload"; Flags: deleteafterinstall
+Source: "{#SrcBin}\BimyRevit.pdb";       DestDir: "{tmp}\payload"; Flags: deleteafterinstall skipifsourcedoesntexist
 Source: "{#AddinTemplate}";                     DestDir: "{tmp}";         Flags: deleteafterinstall
 
 ; Logo icon file ships to {app} so the UninstallDisplayIcon path resolves.
@@ -264,14 +264,22 @@ begin
 
   if not ForceDirectories(Dst) then Exit;
 
-  if not CopyFile(Src + '\RevitWallsPlugin.dll', Dst + '\RevitWallsPlugin.dll', False) then Exit;
+  // Builds before the rename shipped the payload as RevitWallsPlugin.*. Setup
+  // installs over them rather than uninstalling first, so those files would
+  // otherwise sit in this folder forever — unreferenced by any manifest, but
+  // indistinguishable from a live plug-in to anyone who looks.
+  DeleteFile(Dst + '\RevitWallsPlugin.dll');
+  DeleteFile(Dst + '\RevitWallsPlugin.deps.json');
+  DeleteFile(Dst + '\RevitWallsPlugin.pdb');
+
+  if not CopyFile(Src + '\BimyRevit.dll', Dst + '\BimyRevit.dll', False) then Exit;
 
   // deps.json is optional but shipped — ignore failure, the plugin still loads.
-  CopyFile(Src + '\RevitWallsPlugin.deps.json', Dst + '\RevitWallsPlugin.deps.json', False);
+  CopyFile(Src + '\BimyRevit.deps.json', Dst + '\BimyRevit.deps.json', False);
 
   // PDB is optional and best-effort (isn't always present in the bin folder).
-  if FileExists(Src + '\RevitWallsPlugin.pdb') then
-    CopyFile(Src + '\RevitWallsPlugin.pdb', Dst + '\RevitWallsPlugin.pdb', False);
+  if FileExists(Src + '\BimyRevit.pdb') then
+    CopyFile(Src + '\BimyRevit.pdb', Dst + '\BimyRevit.pdb', False);
 
   Result := True;
 end;

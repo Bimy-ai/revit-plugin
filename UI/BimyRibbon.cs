@@ -1,9 +1,9 @@
 using System.Reflection;
 using System.Windows.Media.Imaging;
 using Autodesk.Revit.UI;
-using RevitWallsPlugin.Commands;
+using BimyRevit.Commands;
 
-namespace RevitWallsPlugin.UI;
+namespace BimyRevit.UI;
 
 internal static class BimyRibbon
 {
@@ -13,7 +13,7 @@ internal static class BimyRibbon
     // 16×16 small-image slot; the bundled logo is rectangular but WPF
     // BitmapImage preserves aspect ratio and letterboxes cleanly on the ribbon's
     // grey background.
-    private const string LogoResource = "RevitWallsPlugin.Resources.bimy-logo.png";
+    private const string LogoResource = "BimyRevit.Resources.bimy-logo.png";
 
     public static void Build(UIControlledApplication application)
     {

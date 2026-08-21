@@ -1,6 +1,6 @@
 using System.Net;
 
-namespace RevitWallsPlugin.Services;
+namespace BimyRevit.Services;
 
 /// <summary>
 /// A non-success HTTP answer from the BIMy API, carrying the status and the
