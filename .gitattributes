@@ -1,9 +1,11 @@
-# Shell scripts must have LF endings — CRLF in the shebang makes /usr/bin/env
-# look for `bash\r`, which causes Git Bash to hang on fork retries.
-*.sh        text eol=lf
-install.sh  text eol=lf
-
-# Windows batch / PowerShell expect CRLF.
+# The toolchain here is Windows-only (Revit, MSBuild, Inno Setup), and the
+# scripts are launched by double-click as often as from a shell — where CRLF is
+# what the host expects.
+*.ps1       text eol=crlf
 *.cmd       text eol=crlf
 *.bat       text eol=crlf
-*.ps1       text eol=crlf
+*.iss       text eol=crlf
+
+# Binary assets: never touch line endings, never try to diff them as text.
+*.png       binary
+*.ico       binary
