@@ -21,10 +21,22 @@
   <PropertyGroup>
     <RevitVersion Condition="'$(RevitVersion)' == ''">2025</RevitVersion>
     <RevitInstallDir Condition="'$(RevitInstallDir)' == ''">C:\Program Files\Autodesk\Revit $(RevitVersion)\</RevitInstallDir>
+
+    <!-- Where RevitAPI.dll comes from. A local Revit install is authoritative
+         when there is one; otherwise fall back to the community-published
+         reference assemblies on NuGet so the project builds on a machine with
+         no Revit — which is every CI runner. Nothing about the produced DLL
+         differs between the two: both are reference-only. -->
+    <UseLocalRevitApi Condition="'$(UseLocalRevitApi)' == '' And Exists('$(RevitInstallDir)RevitAPI.dll')">true</UseLocalRevitApi>
+    <UseLocalRevitApi Condition="'$(UseLocalRevitApi)' == ''">false</UseLocalRevitApi>
+    <RevitApiPackageVersion Condition="'$(RevitApiPackageVersion)' == ''">$(RevitVersion).0.0</RevitApiPackageVersion>
   </PropertyGroup>
 
-  <!-- Revit API references. Private=false so the Revit-shipped copies are used at runtime. -->
-  <ItemGroup>
+  <!-- Revit API references. Private/ExcludeAssets keep the assemblies out of
+       the output folder either way: Revit hosts us in its own process and
+       supplies these at runtime, and shipping a second copy alongside the
+       plug-in is how you get assembly-identity conflicts. -->
+  <ItemGroup Condition="'$(UseLocalRevitApi)' == 'true'">
     <Reference Include="RevitAPI">
       <HintPath>$(RevitInstallDir)RevitAPI.dll</HintPath>
       <Private>false</Private>
@@ -33,6 +45,11 @@
       <HintPath>$(RevitInstallDir)RevitAPIUI.dll</HintPath>
       <Private>false</Private>
     </Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseLocalRevitApi)' != 'true'">
+    <PackageReference Include="Revit_All_Main_Versions_API_x64" Version="$(RevitApiPackageVersion)"
+                      ExcludeAssets="runtime" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

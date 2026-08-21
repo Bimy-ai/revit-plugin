@@ -31,7 +31,13 @@
 
 #define AppId          "{7E6A1F4B-9C2D-4A3E-B5F1-2D8C4E6A9B10}"
 #define AppName        "BIMy for Revit"
-#define AppVersion     "1.1.4"
+; The release workflow stamps the version from the git tag with
+;   ISCC /DAppVersion=1.2.3 installer\BIMy.iss
+; so a tagged build can never disagree with the tag. Local builds fall through
+; to the literal below, which dev-reinstall.ps1 -Bump increments in place.
+#ifndef AppVersion
+  #define AppVersion   "1.1.4"
+#endif
 #define AppPublisher   "BIMy.ai"
 #define AppURL         "https://bimy.ai"
 #define AppSupportURL  "https://bimy.ai/support"

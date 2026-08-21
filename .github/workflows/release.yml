@@ -1,0 +1,91 @@
+# Publish a downloadable installer whenever a v* tag is pushed.
+#
+#   git tag v1.2.0 && git push origin v1.2.0
+#
+# The tag is the single source of truth for the version: it is passed to ISCC
+# as /DAppVersion, so the Setup.exe, its Add/Remove Programs entry and the
+# release name can never drift apart.
+#
+# Two copies of the same binary are attached to the release:
+#   BIMy-for-Revit-Setup-1.2.0.exe   archival, one per version
+#   BIMy-for-Revit-Setup.exe         stable name, so the README can link to
+#                                    /releases/latest/download/BIMy-for-Revit-Setup.exe
+#                                    and never need editing again.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, without the leading v (e.g. 1.2.0)'
+        required: true
+
+permissions:
+  contents: write   # needed to create the release and upload assets
+
+env:
+  REVIT_VERSION: '2026'
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Resolve version
+        id: v
+        shell: bash
+        run: |
+          version="${{ github.event.inputs.version }}"
+          [ -n "$version" ] || version="${GITHUB_REF_NAME#v}"
+          # Inno Setup's VersionInfoVersion only accepts numeric dotted forms,
+          # and it fails late — after the whole build — so check it up front.
+          if ! [[ "$version" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+            echo "::error::Version '$version' is not a numeric dotted version (expected e.g. 1.2.0)."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build (Release)
+        run: >
+          dotnet build -c Release
+          -p:RevitVersion=${{ env.REVIT_VERSION }}
+          -p:UseLocalRevitApi=false
+          -p:Version=${{ steps.v.outputs.version }}
+          --disable-build-servers
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Package installer
+        run: >
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          /DAppVersion=${{ steps.v.outputs.version }}
+          installer\BIMy.iss
+
+      - name: Add a stable-named copy
+        shell: bash
+        run: |
+          cd installer/Output
+          cp "BIMy-for-Revit-Setup-${{ steps.v.outputs.version }}.exe" \
+             "BIMy-for-Revit-Setup.exe"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "v${{ steps.v.outputs.version }}" \
+            --title "BIMy for Revit ${{ steps.v.outputs.version }}" \
+            --generate-notes \
+            "installer/Output/BIMy-for-Revit-Setup-${{ steps.v.outputs.version }}.exe" \
+            "installer/Output/BIMy-for-Revit-Setup.exe"

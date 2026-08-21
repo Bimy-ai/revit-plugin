@@ -1,0 +1,65 @@
+# Build the add-in and package the installer on every push and pull request.
+#
+# GitHub's runners have no Revit installed, so there is no RevitAPI.dll on disk.
+# The csproj handles that: it uses a local Revit install when it finds one and
+# otherwise falls back to the published reference assemblies on NuGet. Passing
+# UseLocalRevitApi=false makes the CI path explicit rather than incidental.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The API year to compile against. The produced add-in loads in every Revit
+  # 2022-2030 — the installer deploys to each year it detects on the machine —
+  # so this only decides which API surface the compiler checks against.
+  REVIT_VERSION: '2026'
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Build (Release)
+        run: >
+          dotnet build -c Release
+          -p:RevitVersion=${{ env.REVIT_VERSION }}
+          -p:UseLocalRevitApi=false
+          --disable-build-servers
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Package installer
+        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\BIMy.iss'
+
+      # Not a release — just proof the installer still compiles, and something
+      # a reviewer can download from the run page to try a PR build.
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BIMy-for-Revit-Setup
+          path: installer/Output/*.exe
+          if-no-files-found: error
