@@ -37,9 +37,10 @@ Desktop.ini
 .claude/
 
 # ─── Plugin runtime state (written next to the DLL, usually not in-tree) ─────
-RevitWallsPlugin.log
-RevitWallsPlugin.lasturl.txt
+# Current builds keep all of this in %LOCALAPPDATA%\BIMy; pre-1.1 builds wrote
+# it next to the DLL, which lands in-tree during a -Fast dev loop.
 RevitWallsPlugin.session.json
+RevitWallsPlugin.lasturl.txt
 RevitWallsPlugin.lastProjectId.*.txt
 *.log
 

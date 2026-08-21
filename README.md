@@ -1,5 +1,10 @@
 # BIMy for Revit
 
+[![build](https://github.com/Bimy-ai/revit-plugin/actions/workflows/build.yml/badge.svg)](https://github.com/Bimy-ai/revit-plugin/actions/workflows/build.yml)
+[![latest release](https://img.shields.io/github/v/release/Bimy-ai/revit-plugin?label=download&sort=semver)](https://github.com/Bimy-ai/revit-plugin/releases/latest)
+[![license](https://img.shields.io/github/license/Bimy-ai/revit-plugin)](LICENSE)
+[![Revit 2022–2030](https://img.shields.io/badge/Revit-2022%E2%80%932030-005f9e)](#requirements)
+
 A Revit 2022–2030 add-in that pulls a building you designed in [BIMy](https://bimy.app) into Revit as a **native, editable Revit model** — walls, floors, ceilings, roofs, doors, windows, openings, rooms/spaces, materials and property sets, all as real Revit elements in their real Revit categories.
 
 It adds a **BIMy** panel to the **Add-Ins** ribbon tab:
@@ -12,10 +17,43 @@ It adds a **BIMy** panel to the **Add-Ins** ribbon tab:
 └──────────────┴───────────────────┘
 ```
 
+> **Public beta.** The add-in works end to end and is in daily use, but the
+> installer is not yet code-signed and the API surface it depends on may still
+> move. Please [open an issue](https://github.com/Bimy-ai/revit-plugin/issues)
+> for anything that surprises you.
+
+---
+
+## Download
+
+**[⬇ Download BIMy-for-Revit-Setup.exe](https://github.com/Bimy-ai/revit-plugin/releases/latest/download/BIMy-for-Revit-Setup.exe)** — always the latest release.
+
+Run it and click through; it takes a few seconds. There is no admin prompt: the
+installer writes per-user by default and deploys into **every** Revit year it
+finds on the machine at once. Then restart Revit and look for **BIMy** on the
+**Add-Ins** tab. Every published version, with release notes, is on the
+[releases page](https://github.com/Bimy-ai/revit-plugin/releases).
+
+Two things to expect on a first install, both explained under
+[Troubleshooting](#troubleshooting): Windows SmartScreen warns about the
+unsigned Setup.exe, and Revit asks once whether to load an unsigned add-in.
+
+To uninstall: **Start → BIMy for Revit → Uninstall**, or Add/Remove Programs.
+
+### Requirements
+
+| | |
+| --- | --- |
+| Revit | 2022 – 2030, 64-bit (the installer detects which years you have) |
+| Windows | 10 or 11, x64 or ARM64 |
+| .NET | None to install — Revit 2025+ already hosts the .NET 8 desktop runtime |
+| Account | A [BIMy](https://bimy.app) account and an API token (**Settings → API tokens**) |
+
 ---
 
 ## Table of contents
 
+- [Download](#download)
 - [How it works](#how-it-works)
 - [The round trip](#the-round-trip)
 - [Commands](#commands)
@@ -23,9 +61,12 @@ It adds a **BIMy** panel to the **Add-Ins** ribbon tab:
 - [Project layout](#project-layout)
 - [API contract](#api-contract)
 - [Building and installing](#building-and-installing)
+- [Releasing](#releasing)
 - [State and persistence](#state-and-persistence)
 - [Troubleshooting](#troubleshooting)
 - [Extending](#extending)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
@@ -34,8 +75,7 @@ It adds a **BIMy** panel to the **Add-Ins** ribbon tab:
 **The app writes the building; Revit reads it.** There is deliberately no
 per-element creation code in this add-in.
 
-BIMy's own IFC generator (`frontend/src/lib/ifc/ifcGenerate.js`) already knows
-exactly what the building is — it is the same code path that powers the app's
+BIMy's own IFC generator already knows exactly what the building is — it is the same code path that powers the app's
 IFC export, complete with element types, material layers, openings, derived
 rooms and property sets. Revit's native IFC importer already knows exactly how
 to turn every one of those into a first-class Revit element.
@@ -158,13 +198,16 @@ whatever location you picked last for that project.
 
 ```
 revit-plugin/
-├── RevitWallsPlugin.csproj      # net8.0-windows, x64, references Revit DLLs
-├── RevitWallsPlugin.addin       # dev manifest (flat Assembly path)
+├── BimyRevit.csproj             # net8.0-windows, x64, references the Revit API
+├── BimyRevit.sln
 ├── dev-reinstall.ps1            # build → reinstall → relaunch Revit (see below)
-├── build-installer.ps1          # build → package → upload Setup.exe to GCS
+├── build-installer.ps1          # build → package Setup.exe → upload to GCS
 ├── installer/
 │   ├── BIMy.iss                 # Inno Setup script (multi-year deployment)
 │   └── BIMy.addin.template      # shipped manifest (bundled BIMy\ layout)
+├── .github/workflows/
+│   ├── build.yml                # CI: build + package on every push and PR
+│   └── release.yml              # v* tag → Setup.exe attached to a release
 │
 ├── Commands/
 │   ├── BimyApplication.cs       # IExternalApplication: ribbon + session warm-up
@@ -224,17 +267,40 @@ The pull's response headers:
 A `404` on the pull means "not exported to Revit yet" and is a normal state, not
 an error — the add-in says so and offers to open the project in BIMy.
 
-Server side lives in `api/src/export/routes/revitIfc.ts`; the publish side lives
-in `frontend/src/lib/ifc/export.js` (`exportToRevit`) and
-`frontend/src/api/revit.js`.
+Both ends of this contract — the export route and the client-side IFC
+generator that feeds it — live in the BIMy web app, which is a separate,
+closed-source repository. This add-in only consumes the four calls above, so
+nothing here needs that source to build or run.
 
 ---
 
 ## Building and installing
 
-Prerequisites: .NET SDK 8.x, a Revit install (2022–2030) for `RevitAPI.dll`, and
-— for installer builds — [Inno Setup 6](https://jrsoftware.org/isdl.php)
-(`winget install JRSoftware.InnoSetup`).
+*If you only want to use the add-in, take the
+[installer](#download) — none of this is needed.*
+
+Prerequisites:
+
+| | |
+| --- | --- |
+| [.NET SDK 8.x](https://dotnet.microsoft.com/download/dotnet/8.0) | Required. |
+| A Revit install, 2022–2030 | Optional. Used for `RevitAPI.dll` when present; otherwise the build falls back to the [published reference assemblies on NuGet](https://www.nuget.org/packages/Revit_All_Main_Versions_API_x64), so the project compiles on a machine with no Revit at all — which is how CI builds it. |
+| [Inno Setup 6](https://jrsoftware.org/isdl.php) | Only for building a `Setup.exe`. `winget install JRSoftware.InnoSetup`. |
+| PowerShell 7+ | Only for `build-installer.ps1`, which signs the GCS upload JWT with `RSA.ImportFromPem` (.NET 5+, absent from Windows PowerShell 5.1). The script relaunches itself under `pwsh` if you start it from 5.1. |
+
+The whole build is one command:
+
+```powershell
+git clone https://github.com/Bimy-ai/revit-plugin.git
+cd revit-plugin
+dotnet build -c Release                      # against the newest Revit you have
+dotnet build -c Release -p:RevitVersion=2026 # or pin the API year
+dotnet build -c Release -p:UseLocalRevitApi=false   # force the NuGet fallback
+```
+
+The output is a single `bin\Release\BimyRevit.dll`. Which API year you compile
+against only decides the surface the compiler checks — the resulting add-in
+loads in every Revit 2022–2030.
 
 ### Development loop
 
@@ -257,18 +323,17 @@ it was running. It never uploads anything.
 Other flags: `-RevitVersion 2025`, `-AllUsers`, `-NoRestart`,
 `-Configuration Debug` (with `-Fast`).
 
-### Release
+### Packaging a Setup.exe locally
 
 ```powershell
-pwsh -File build-installer.ps1        # build + package + upload to GCS
-pwsh -File build-installer.ps1 -SkipUpload
+pwsh -File build-installer.ps1 -SkipUpload   # build + package
+pwsh -File build-installer.ps1               # ...and upload to GCS
 ```
 
-Or build by hand:
-
-```powershell
-dotnet build -c Release -p:RevitVersion=2026
-```
+The result lands in `installer\Output\`. The upload step pushes the same
+Setup.exe to BIMy's `bimy-common-assets` bucket and needs a service-account key
+(`$GCP_KEY_FILE`, or `~\bimy\infra\gcp.json`); without one it says so and skips,
+so contributors outside BIMy can still build and package.
 
 ### What the installer does
 
@@ -283,6 +348,47 @@ year at once:
 Per-user by default (no admin, no UAC); run it elevated and it also writes the
 machine-wide `%ProgramData%` copy. Uninstall from Start → BIMy for Revit, or
 Add/Remove Programs.
+
+---
+
+## Releasing
+
+Two GitHub Actions workflows, both on `windows-latest`, both building the exact
+same way you would locally.
+
+### `build.yml` — every push and pull request
+
+Builds Release and compiles the installer, then attaches the `Setup.exe` to the
+run as an artifact. Nothing is published; this is proof the tree still packages,
+and it gives a reviewer a build of the PR they can actually install. The runner
+has no Revit, so it passes `-p:UseLocalRevitApi=false` to make the NuGet
+reference-assembly path explicit rather than incidental.
+
+### `release.yml` — on a `v*` tag
+
+```powershell
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+That is the entire release process. The tag is the single source of truth for
+the version: it is passed to Inno Setup as `/DAppVersion`, so the Setup.exe, its
+Add/Remove Programs entry and the GitHub release name cannot drift apart. (The
+literal `AppVersion` in `installer\BIMy.iss` is only a fallback for local
+builds, wrapped in `#ifndef`.) The workflow rejects a tag that isn't a numeric
+dotted version *before* building, because `VersionInfoVersion` would otherwise
+fail at the very end of the compile.
+
+Each release gets two copies of the same binary:
+
+| Asset | Why |
+| --- | --- |
+| `BIMy-for-Revit-Setup-1.2.0.exe` | Archival — one per version, permanently addressable. |
+| `BIMy-for-Revit-Setup.exe` | Stable name, so `/releases/latest/download/BIMy-for-Revit-Setup.exe` always resolves and the README download link never needs editing. |
+
+Release notes are generated from the commits since the previous tag, so a
+readable commit log is the release changelog. `workflow_dispatch` can also be
+used to re-cut a version by hand from the Actions tab.
 
 ---
 
@@ -312,6 +418,23 @@ Get-Content "$env:LOCALAPPDATA\BIMy\bimy.log" -Wait -Tail 50
 
 ## Troubleshooting
 
+The **Status & log** button answers most of these — it shows who is connected,
+to which environment, the add-in and Revit versions, and opens the log. That log
+is the first thing to attach to a bug report.
+
+**Windows SmartScreen says "Windows protected your PC" when I run Setup.exe.**
+Expected: the installer isn't code-signed yet, and SmartScreen distrusts any
+executable it hasn't seen often. **More info → Run anyway**. Code signing is on
+the list for the 1.x release.
+
+**No BIMy panel after installing.**
+Restart Revit — the ribbon is built at startup, so an already-running Revit
+won't pick up a fresh install. If it's still missing, confirm the manifest
+landed: `%AppData%\Autodesk\Revit\Addins\<year>\BIMy.addin` should exist next to
+a `BIMy\` folder. If the year folder isn't there at all, the installer didn't
+detect that Revit — it probes for `C:\Program Files\Autodesk\Revit <year>\Revit.exe`,
+so a non-default install location is the usual cause.
+
 **"Load from BIMy" is greyed out.**
 No verified session. **Set API token…**, then check **Status & log**.
 
@@ -335,12 +458,18 @@ The deployment predates `GET /api/export/revit-ifc`. Harmless; pulls still work.
 Expected until the installer is code-signed. Click **Always Load**.
 
 **Two BIMy panels on the ribbon.**
-Both a flat `RevitWallsPlugin.addin` (from the legacy `install.sh`) and the
-installer's `BIMy.addin` are registered in the same year folder. Delete the flat
-one, or uninstall and re-run `dev-reinstall.ps1`.
+More than one `.addin` manifest in the same year folder points at a BIMy
+assembly — typically a hand-copied one left over from an older build sitting
+beside the installer's `BIMy.addin`. Delete the extra manifest from
+`%AppData%\Autodesk\Revit\Addins\<year>\`, or uninstall and reinstall.
 
 **MSBuild warning MSB3277 about version conflicts.**
 Expected and benign — Revit's DLL graph drags in multi-version references.
+
+**The installer says no Revit was detected, but Revit is installed.**
+It looks for `Revit.exe` under `C:\Program Files\Autodesk\Revit <year>\` for
+years 2022–2030. A Revit installed elsewhere, or a year outside that range, is
+invisible to it. Open an issue with your install path.
 
 ---
 
@@ -348,8 +477,8 @@ Expected and benign — Revit's DLL graph drags in multi-version references.
 
 | Need | Where |
 | --- | --- |
-| A new element kind in Revit | **Not here.** Teach `frontend/src/lib/ifc/ifcGenerate.js` to write it; the importer picks it up with no plug-in change. |
-| Better Revit material names | `frontend/src/lib/ifc/revitBridge.js` — the canonical → Revit template name map. |
+| A new element kind in Revit | **Not here.** Teach BIMy's IFC generator to write it; Revit's importer picks it up with no plug-in change at all. |
+| Better Revit material names | Also upstream — the canonical → Revit template name map lives with the generator. |
 | Import options (link vs open, intent, auto-join) | `Services/RevitIfcImporter.ConvertToRevit`. |
 | Different save behaviour | `Services/TargetPath`. |
 | More columns / filters in the picker | `UI/ProjectPickerDialog` + `Models/ProjectDtos`. |
@@ -357,3 +486,36 @@ Expected and benign — Revit's DLL graph drags in multi-version references.
 
 The rule that keeps this small: **the app decides what a building is; the
 plug-in decides how it arrives.** Anything geometric belongs upstream.
+
+---
+
+## Contributing
+
+Issues and pull requests are welcome — bug reports especially, since the
+add-in's failure modes are mostly environmental (a Revit year we didn't
+anticipate, an install path we don't probe, a model that trips the IFC
+importer). A good report includes the Revit year, the add-in version and the
+tail of `%LOCALAPPDATA%\BIMy\bimy.log`, all of which **Status & log** hands you.
+
+A few conventions worth knowing before you send a patch:
+
+- **Nothing geometric belongs in this repo.** See [Extending](#extending) — if
+  the fix is "Revit should also receive X", the change is upstream in BIMy's
+  IFC generator, and this add-in gets it for free.
+- **CI must stay Revit-free.** Anything that only compiles against a real
+  `RevitAPI.dll` on disk breaks the build for every contributor without Revit.
+  Check with `dotnet build -c Release -p:UseLocalRevitApi=false`.
+- **Don't touch the DPAPI entropy string or the legacy session file name** in
+  `Services/Session.cs`. They are on-disk format, not identifiers; changing
+  either silently signs every existing user out.
+- The `.gitattributes` pins CRLF for `.ps1`/`.iss`/`.cmd` — these are launched
+  by double-click as often as from a shell.
+
+---
+
+## License
+
+[MIT](LICENSE). © 2026 BIMy.ai
+
+"Revit" and "Autodesk" are trademarks of Autodesk, Inc. This add-in is not
+affiliated with or endorsed by Autodesk.
