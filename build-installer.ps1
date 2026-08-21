@@ -37,12 +37,35 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+# ─── Re-launch under PowerShell 7 if started by Windows PowerShell ───────────
+# The Start-menu "PowerShell", right-click "Run with PowerShell", and most IDE
+# terminals are still Windows PowerShell 5.1, where RSA.ImportFromPem (.NET 5+)
+# doesn't exist. Rather than dead-ending with an error, hand the run off to
+# pwsh. -ExecutionPolicy Bypass is passed because the child would otherwise
+# inherit a Restricted policy and refuse to load this file.
 if ($PSVersionTable.PSEdition -ne 'Core') {
-    Write-Error "This script needs PowerShell 7+ (pwsh). Detected $($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion). Run with 'pwsh -File build-installer.ps1'."
-    exit 1
+    $pwsh = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
+    if (-not $pwsh) {
+        $pwsh = @(
+            "$env:ProgramFiles\PowerShell\7\pwsh.exe",
+            "${env:ProgramFiles(x86)}\PowerShell\7\pwsh.exe"
+        ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    }
+    if (-not $pwsh) {
+        Write-Error "This script needs PowerShell 7+, but pwsh.exe was not found. Install it with 'winget install Microsoft.PowerShell' and re-run."
+        exit 1
+    }
+    Write-Host "Detected Windows PowerShell $($PSVersionTable.PSVersion) - relaunching under PowerShell 7..."
+    $fwd = @()
+    if ($RevitVersion) { $fwd += @('-RevitVersion', $RevitVersion) }
+    if ($SkipUpload)   { $fwd += '-SkipUpload' }
+    & $pwsh -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath @fwd
+    exit $LASTEXITCODE
 }
 
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+# $PSCommandPath, unlike $MyInvocation.MyCommand.Path, stays correct when the
+# script is dot-sourced rather than invoked by path.
+$ScriptDir = Split-Path -Parent $PSCommandPath
 Set-Location $ScriptDir
 
 # ─── Detect Revit API ────────────────────────────────────────────────────────
