@@ -150,6 +150,12 @@ if ($Fast) {
         $pluginDir = Join-Path $root 'BIMy'
         try {
             New-Item -ItemType Directory -Force -Path $pluginDir | Out-Null
+            # Same legacy sweep the installer does: a folder deployed before the
+            # rename still holds RevitWallsPlugin.*, which nothing references but
+            # everything looks like.
+            foreach ($stale in 'RevitWallsPlugin.dll', 'RevitWallsPlugin.deps.json', 'RevitWallsPlugin.pdb') {
+                Remove-Item (Join-Path $pluginDir $stale) -Force -ErrorAction SilentlyContinue
+            }
             foreach ($name in 'BimyRevit.dll', 'BimyRevit.deps.json', 'BimyRevit.pdb') {
                 $src = Join-Path $BinDir $name
                 if (Test-Path $src) { Copy-Item $src -Destination $pluginDir -Force }
