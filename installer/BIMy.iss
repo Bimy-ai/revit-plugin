@@ -36,7 +36,7 @@
 ; so a tagged build can never disagree with the tag. Local builds fall through
 ; to the literal below, which dev-reinstall.ps1 -Bump increments in place.
 #ifndef AppVersion
-  #define AppVersion   "1.2.0"
+  #define AppVersion   "1.3.0"
 #endif
 #define AppPublisher   "BIMy.ai"
 #define AppURL         "https://bimy.ai"

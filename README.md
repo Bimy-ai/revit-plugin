@@ -367,8 +367,8 @@ reference-assembly path explicit rather than incidental.
 ### `release.yml` — on a `v*` tag
 
 ```powershell
-git tag v1.2.0
-git push origin v1.2.0
+git tag v1.3.0
+git push origin v1.3.0
 ```
 
 That is the entire release process. The tag is the single source of truth for
@@ -383,7 +383,7 @@ Each release gets two copies of the same binary:
 
 | Asset | Why |
 | --- | --- |
-| `BIMy-for-Revit-Setup-1.2.0.exe` | Archival — one per version, permanently addressable. |
+| `BIMy-for-Revit-Setup-1.3.0.exe` | Archival — one per version, permanently addressable. |
 | `BIMy-for-Revit-Setup.exe` | Stable name, so `/releases/latest/download/BIMy-for-Revit-Setup.exe` always resolves and the README download link never needs editing. |
 
 Release notes are generated from the commits since the previous tag, so a
