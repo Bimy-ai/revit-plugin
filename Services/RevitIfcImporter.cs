@@ -10,7 +10,7 @@ using BimyRevit.UI;
 namespace BimyRevit.Services;
 
 /// <summary>
-/// Pulls a project's published IFC from BIMy and turns it into a native Revit
+/// Pulls a project's IFC from BIMy and turns it into a native Revit
 /// model. This is the whole import: BIMy's own generator
 /// (frontend/src/lib/ifc/ifcGenerate.js) writes the faithful building — walls,
 /// floors, ceilings, doors, windows, openings, spaces, materials and property
@@ -60,12 +60,12 @@ internal static class RevitIfcImporter
         var cached = PullCache.Get(env, projectId);
         var hwnd = uiApp.MainWindowHandle;
 
-        // ── 1. Pull the published IFC (conditionally) ────────────────────────
+        // ── 1. Pull the project's IFC (conditionally) ────────────────────────
         var ifcPath = Path.Combine(BimyPaths.ModelDir(projectId), "model.ifc");
         JsonFetcher.DownloadResult download;
         try
         {
-            Log.Info($"Pulling published IFC for project {projectId} from {url}"
+            Log.Info($"Pulling IFC for project {projectId} from {url}"
                      + (cached?.ETag is null ? "" : $" (If-None-Match: {cached.ETag})"));
 
             download = ProgressWindow.Run(hwnd, "Load from BIMy", "Contacting BIMy…", async progress =>
@@ -73,12 +73,12 @@ internal static class RevitIfcImporter
                     url, token, ifcPath,
                     ifNoneMatch: cached?.ETag,
                     bytesRead: new Progress<long>(bytes =>
-                        progress.Report($"Downloading the published model… {Megabytes(bytes)}")),
+                        progress.Report($"Downloading the model… {Megabytes(bytes)}")),
                     ct: default));
         }
         catch (BimyFetchException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
-            ShowNotPublished(env, projectId, ex);
+            ShowNothingToLoad(env, projectId, ex);
             return Result.Cancelled;
         }
         catch (BimyFetchException ex) when (ex.StatusCode == HttpStatusCode.Unauthorized
@@ -118,12 +118,12 @@ internal static class RevitIfcImporter
                 // nothing — re-fetch unconditionally so there IS an IFC on disk.
                 try
                 {
-                    download = ProgressWindow.Run(hwnd, "Load from BIMy", "Re-downloading the published model…", async progress =>
+                    download = ProgressWindow.Run(hwnd, "Load from BIMy", "Re-downloading the model…", async progress =>
                         await JsonFetcher.DownloadToFileAsync(
                             url, token, ifcPath,
                             ifNoneMatch: null,
                             bytesRead: new Progress<long>(bytes =>
-                                progress.Report($"Re-downloading the published model… {Megabytes(bytes)}")),
+                                progress.Report($"Re-downloading the model… {Megabytes(bytes)}")),
                             ct: default));
                 }
                 catch (Exception ex)
@@ -140,11 +140,11 @@ internal static class RevitIfcImporter
                 Log.Warn("Cache had an ETag but neither the .rvt nor the .ifc is on disk — pulling again unconditionally.");
                 try
                 {
-                    download = ProgressWindow.Run(hwnd, "Load from BIMy", "Downloading the published model…", async progress =>
+                    download = ProgressWindow.Run(hwnd, "Load from BIMy", "Downloading the model…", async progress =>
                         await JsonFetcher.DownloadToFileAsync(
                             url, token, ifcPath, ifNoneMatch: null,
                             bytesRead: new Progress<long>(bytes =>
-                                progress.Report($"Downloading the published model… {Megabytes(bytes)}")),
+                                progress.Report($"Downloading the model… {Megabytes(bytes)}")),
                             ct: default));
                 }
                 catch (Exception ex)
@@ -353,7 +353,7 @@ internal static class RevitIfcImporter
         {
             MainIcon = TaskDialogIcon.TaskDialogIconInformation,
             MainInstruction = $"“{projectName}” hasn't changed since you last pulled it",
-            MainContent = "Nothing has been re-exported in BIMy since this machine downloaded the model.",
+            MainContent = "The model hasn't changed in BIMy since this machine downloaded it.",
             CommonButtons = TaskDialogCommonButtons.Cancel,
             DefaultButton = TaskDialogResult.CommandLink1,
         };
@@ -372,15 +372,18 @@ internal static class RevitIfcImporter
         };
     }
 
-    private static void ShowNotPublished(BimyEnvironment env, string projectId, BimyFetchException ex)
+    // The API serves every project's model on demand, so a 404 stopped meaning
+    // "not exported yet" — it now means the project has nothing to load at all
+    // (nothing drawn or imported), or the id doesn't resolve for this token.
+    private static void ShowNothingToLoad(BimyEnvironment env, string projectId, BimyFetchException ex)
     {
         var dialog = new TaskDialog("Load from BIMy")
         {
             MainIcon = TaskDialogIcon.TaskDialogIconInformation,
-            MainInstruction = "This project hasn't been exported to Revit yet",
+            MainInstruction = "This project has nothing to load yet",
             MainContent =
-                "Open the project in BIMy and choose \"Export to Revit\" to publish the model, "
-                + "then run Load from BIMy again."
+                "Draw or import a building in BIMy first, then run Load from BIMy again. "
+                + "If you pasted an id, check it belongs to a project this account can open."
                 + (string.IsNullOrWhiteSpace(ex.ServerMessage) ? "" : "\n\n" + ex.ServerMessage),
             CommonButtons = TaskDialogCommonButtons.Close,
         };

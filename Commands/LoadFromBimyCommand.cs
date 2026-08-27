@@ -38,27 +38,23 @@ public sealed class LoadFromBimyCommand : IExternalCommand
         var token = SessionState.Token!;
         var env = SessionState.Environment ?? BimyEnvironments.Default;
 
-        // Fetch the project list and the publish index together, behind the
-        // progress window — two small calls, but on a slow connection they are
-        // still seconds during which a dialog-less Revit looks hung. Neither
-        // call can fail the command: both degrade to an empty list, and the
-        // picker's paste-an-id field covers that.
-        var (projects, published) = ProgressWindow.Run(
+        // Fetch the project list behind the progress window — one small call,
+        // but on a slow connection it is still seconds during which a
+        // dialog-less Revit looks hung. It cannot fail the command: it degrades
+        // to an empty list, and the picker's paste-an-id field covers that.
+        //
+        // No publish index any more: the API serves every project's model on
+        // demand (publishing in the app is just a freshness optimisation), so
+        // "which projects are pullable" stopped being a question — all of them.
+        var projects = ProgressWindow.Run(
             uiApp.MainWindowHandle, "Load from BIMy", "Loading your BIMy projects…",
-            async _ =>
-            {
-                var projectsTask = BimyApi.ListProjectsAsync(env, token);
-                var publishedTask = BimyApi.ListPublishedAsync(env, token);
-                await Task.WhenAll(projectsTask, publishedTask).ConfigureAwait(true);
-                return (await projectsTask, await publishedTask);
-            });
+            async _ => await BimyApi.ListProjectsAsync(env, token));
 
         var pick = ProjectPickerDialog.Show(
             uiApp.MainWindowHandle,
             env,
             SessionState.Current?.DisplayLabel,
             projects,
-            published,
             preselectProjectId: PullCache.LastProjectId(env),
             canLink: uiApp.ActiveUIDocument?.Document is not null);
 

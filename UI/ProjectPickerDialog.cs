@@ -36,23 +36,25 @@ internal sealed class PickResult
 /// The version this replaces asked for a 24-character hex id, which meant every
 /// pull started with a trip to the browser to copy one — for a plugin whose
 /// entire job is "get my building into Revit in two clicks". This lists the
-/// workspace's real projects by name, marks the ones actually exported to Revit
-/// (and how long ago), remembers the last one pulled, and keeps the paste field
-/// as a fallback for the cases a list can't cover: a project shared by id, or a
-/// deployment whose list call didn't answer.
+/// workspace's real projects by name, remembers the last one pulled, and keeps
+/// the paste field as a fallback for the cases a list can't cover: a project
+/// shared by id, or a deployment whose list call didn't answer.
+///
+/// Every listed project is equally loadable — the API serves each project's
+/// model on demand — so the list carries no publish state, no badges, and no
+/// detour through the web app before a pull can happen.
 /// </summary>
 internal static class ProjectPickerDialog
 {
     // Row template. Written as XAML rather than assembled from C# objects
-    // because a two-line list row with an ellipsised title and a status pill is
-    // twenty lines of declarative markup and ~80 of imperative WPF.
+    // because a two-line list row with an ellipsised title is declarative
+    // markup's home turf and ~60 lines of imperative WPF.
     private const string RowTemplateXaml = """
         <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
           <Grid Margin="2,5,2,5">
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="Auto"/>
               <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <TextBlock Grid.Column="0" Text="{Binding Emoji}" FontSize="17"
                        Margin="2,0,10,0" VerticalAlignment="Center"/>
@@ -61,21 +63,10 @@ internal static class ProjectPickerDialog
               <TextBlock Text="{Binding Subtitle}" FontSize="11" Opacity="0.6"
                          TextTrimming="CharacterEllipsis" Margin="0,1,0,0"/>
             </StackPanel>
-            <Border Grid.Column="2" CornerRadius="9" Padding="8,2,8,2" Margin="8,0,2,0"
-                    VerticalAlignment="Center"
-                    Background="{Binding BadgeBackground}"
-                    Visibility="{Binding BadgeVisibility}">
-              <TextBlock Text="{Binding Badge}" FontSize="10" FontWeight="SemiBold"
-                         Foreground="{Binding BadgeForeground}"/>
-            </Border>
           </Grid>
         </DataTemplate>
         """;
 
-    private static readonly Brush PublishedBackground = Frozen(Color.FromRgb(0xE3, 0xF3, 0xE7));
-    private static readonly Brush PublishedForeground = Frozen(Color.FromRgb(0x1B, 0x6B, 0x37));
-    private static readonly Brush MutedBackground = Frozen(Color.FromRgb(0xEE, 0xEE, 0xEE));
-    private static readonly Brush MutedForeground = Frozen(Color.FromRgb(0x77, 0x77, 0x77));
     private static readonly Brush Subtle = Frozen(Color.FromRgb(0x78, 0x78, 0x78));
 
     /// <summary>One list row. Public getters only — the list is rebuilt, never mutated.</summary>
@@ -85,11 +76,6 @@ internal static class ProjectPickerDialog
         public string Name { get; init; } = string.Empty;
         public string Emoji { get; init; } = "🏗";
         public string Subtitle { get; init; } = string.Empty;
-        public string Badge { get; init; } = string.Empty;
-        public bool IsPublished { get; init; }
-        public Brush BadgeBackground => IsPublished ? PublishedBackground : MutedBackground;
-        public Brush BadgeForeground => IsPublished ? PublishedForeground : MutedForeground;
-        public Visibility BadgeVisibility => string.IsNullOrEmpty(Badge) ? Visibility.Collapsed : Visibility.Visible;
         /// <summary>Lower-cased haystack the search box filters against.</summary>
         public string SearchKey { get; init; } = string.Empty;
     }
@@ -99,7 +85,6 @@ internal static class ProjectPickerDialog
         BimyEnvironment env,
         string? accountLabel,
         IReadOnlyList<BimyProject> projects,
-        IReadOnlyDictionary<string, BimyPublishedModel> published,
         string? preselectProjectId,
         bool canLink)
     {
@@ -149,7 +134,7 @@ internal static class ProjectPickerDialog
         AddPlaceholder(search, "Search projects…");
 
         // ── The list ─────────────────────────────────────────────────────────
-        var rows = BuildRows(projects, published, env);
+        var rows = BuildRows(projects, env);
         var list = new ListBox
         {
             ItemTemplate = (DataTemplate)XamlReader.Parse(RowTemplateXaml),
@@ -241,7 +226,7 @@ internal static class ProjectPickerDialog
             Content = "Open in BIMy ↗",
             Height = 28,
             Padding = new Thickness(10, 0, 10, 0),
-            ToolTip = "Open the selected project in your browser — that's where \"Export to Revit\" lives.",
+            ToolTip = "Open the selected project in your browser to review it before loading.",
             IsEnabled = false,
         };
         Grid.SetColumn(openInBimy, 0);
@@ -287,7 +272,7 @@ internal static class ProjectPickerDialog
             if (typed is null && !string.IsNullOrWhiteSpace(manual.Text))
             {
                 MessageBox.Show(window,
-                    "That doesn't contain a project id. A BIMy id is 24 hexadecimal characters — copy it from the project's URL, or from Export to Revit in the app.",
+                    "That doesn't contain a project id. A BIMy id is 24 hexadecimal characters — copy it from the project's URL in the app.",
                     "Load from BIMy", MessageBoxButton.OK, MessageBoxImage.Warning);
                 manual.Focus();
                 manual.SelectAll();
@@ -341,10 +326,7 @@ internal static class ProjectPickerDialog
         return window.ShowDialog() == true ? result : null;
     }
 
-    private static List<Row> BuildRows(
-        IReadOnlyList<BimyProject> projects,
-        IReadOnlyDictionary<string, BimyPublishedModel> published,
-        BimyEnvironment env)
+    private static List<Row> BuildRows(IReadOnlyList<BimyProject> projects, BimyEnvironment env)
     {
         var rows = new List<Row>(projects.Count);
         var pulls = PullCache.GetAll(env);
@@ -353,15 +335,10 @@ internal static class ProjectPickerDialog
         {
             if (string.IsNullOrWhiteSpace(p.Id)) continue;
 
-            published.TryGetValue(p.Id!, out var pub);
             pulls.TryGetValue(p.Id!, out var pulled);
 
             var parts = new List<string>();
-            if (pub is not null)
-                parts.Add("Exported " + Ago(pub.UpdatedAt));
-            else if (published.Count > 0)
-                parts.Add("Not exported to Revit yet");
-            else if (p.Touched is not null)
+            if (p.Touched is not null)
                 parts.Add("Edited " + Ago(p.Touched));
             if (pulled?.PulledAt is not null)
                 parts.Add("pulled here " + Ago(pulled.PulledAt));
@@ -373,17 +350,12 @@ internal static class ProjectPickerDialog
                 Name = p.DisplayName,
                 Emoji = string.IsNullOrWhiteSpace(p.Emoji) ? "🏗" : p.Emoji!,
                 Subtitle = string.Join("  ·  ", parts),
-                // With no index available every badge would say the same thing,
-                // which is noise; show them only when the index answered.
-                Badge = published.Count == 0 ? string.Empty : (pub is not null ? "READY" : "NOT EXPORTED"),
-                IsPublished = pub is not null,
                 SearchKey = (p.DisplayName + " " + p.Id).ToLowerInvariant(),
             });
         }
 
-        // Pullable projects first — everything else in this dialog is a detour.
-        // Within each group keep the server's newest-first order.
-        return rows.OrderByDescending(r => r.IsPublished).ToList();
+        // The server's newest-first order — every row is equally pullable.
+        return rows;
     }
 
     /// <summary>Compact relative time ("3 minutes ago", "yesterday", "12 Mar 2026").</summary>

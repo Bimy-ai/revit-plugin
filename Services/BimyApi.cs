@@ -66,35 +66,6 @@ internal static class BimyApi
         }
     }
 
-    /// <summary>
-    /// Which projects have a published Revit model. Optional endpoint — a 404
-    /// (older deployment) is normal and yields an empty map, not an error.
-    /// </summary>
-    public static async Task<IReadOnlyDictionary<string, BimyPublishedModel>> ListPublishedAsync(
-        BimyEnvironment env, string token, CancellationToken ct = default)
-    {
-        var url = BimyEnvironments.RevitIfcIndexUrl(env);
-        try
-        {
-            var items = await JsonFetcher.FetchAsync<List<BimyPublishedModel>>(url, token, ct).ConfigureAwait(false);
-            var map = new Dictionary<string, BimyPublishedModel>(StringComparer.OrdinalIgnoreCase);
-            foreach (var item in items)
-                if (!string.IsNullOrWhiteSpace(item.ProjectId)) map[item.ProjectId!] = item;
-            Log.Info($"Publish index: {map.Count} project(s) exported to Revit.");
-            return map;
-        }
-        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
-        {
-            Log.Info("Publish index not available on this deployment — continuing without publish badges.");
-            return new Dictionary<string, BimyPublishedModel>();
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"Could not read publish index: {ex.GetType().Name}: {ex.Message}");
-            return new Dictionary<string, BimyPublishedModel>();
-        }
-    }
-
     private static BimyUser? ExtractUser(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object) return null;

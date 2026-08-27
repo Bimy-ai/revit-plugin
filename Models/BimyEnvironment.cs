@@ -41,20 +41,14 @@ public static class BimyEnvironments
     public static string AuthUrl(BimyEnvironment env) => BaseUrl(env) + "/api/auth";
 
     /// <summary>
-    /// The project's published Revit model: the faithful IFC the BIMy app writes
-    /// on "Export to Revit" (walls, floors, ceilings, doors, windows, openings,
-    /// spaces, materials, property sets). Pulled by the plugin and opened natively.
+    /// The project's Revit model: the faithful IFC (walls, floors, ceilings,
+    /// doors, windows, openings, spaces, materials, property sets), served on
+    /// demand for ANY project — the freshest of a published snapshot, the
+    /// project's stored model, or a server-side generation from its drawings.
+    /// Pulled by the plugin and opened natively.
     /// </summary>
     public static string RevitIfcUrl(BimyEnvironment env, string projectId)
         => $"{BaseUrl(env)}/api/export/revit-ifc/{projectId}";
-
-    /// <summary>
-    /// The publish index — which projects have been exported to Revit, and when.
-    /// Optional: deployments older than this endpoint answer 404 and the picker
-    /// just shows no "published" badges.
-    /// </summary>
-    public static string RevitIfcIndexUrl(BimyEnvironment env)
-        => $"{BaseUrl(env)}/api/export/revit-ifc";
 
     /// <summary>
     /// The workspace's projects, newest first, through the generic CRUD list

@@ -33,24 +33,3 @@ public sealed class BimyProject
     [JsonIgnore]
     public DateTimeOffset? Touched => UpdatedAt ?? CreatedAt;
 }
-
-/// <summary>
-/// One entry of the publish index (<c>GET /api/export/revit-ifc</c>): a project
-/// that has been exported to Revit and can therefore be pulled right now.
-/// Absent on older deployments — the picker treats that as "no badges", never
-/// as an error.
-/// </summary>
-public sealed class BimyPublishedModel
-{
-    [JsonPropertyName("projectId")]
-    public string? ProjectId { get; set; }
-
-    [JsonPropertyName("name")]
-    public string? Name { get; set; }
-
-    [JsonPropertyName("updatedAt")]
-    public DateTimeOffset? UpdatedAt { get; set; }
-
-    [JsonPropertyName("size")]
-    public long? Size { get; set; }
-}

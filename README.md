@@ -105,26 +105,29 @@ pull actually goes wrong in practice:
 ```
    BIMy web app                    BIMy API                     Revit
  ┌──────────────┐          ┌──────────────────────┐      ┌──────────────────┐
- │ Export to    │  PUT     │ /api/export/         │      │ Load from BIMy   │
- │ Revit        ├─────────►│   revit-ifc/:project ├─────►│                  │
- │              │  IFC4    │                      │ GET  │  ├ download      │
- │ ifcGenerate  │  STEP    │  GridFS: revitExport │ IFC  │  ├ OpenIFCDocument│
- │ .js          │          │  one blob / project  │      │  ├ SaveAs .rvt   │
- └──────────────┘          └──────────────────────┘      │  └ open or link  │
-                                                          └──────────────────┘
+ │ draw / import│   save   │ /api/export/         │      │ Load from BIMy   │
+ │ the building ├─────────►│   revit-ifc/:project ├─────►│                  │
+ │              │          │                      │ GET  │  ├ download      │
+ │ (optional:   │          │ snapshot | stored IFC│ IFC  │  ├ OpenIFCDocument│
+ │  Export to   │  PUT     │ | generated on demand│      │  ├ SaveAs .rvt   │
+ │  Revit)      │  IFC4    │   from the drawings  │      │  └ open or link  │
+ └──────────────┘          └──────────────────────┘      └──────────────────┘
 ```
 
-1. In BIMy: **Export to Revit** (command palette, or the Project menu). The
-   client generates the IFC and `PUT`s it to the API, which stores one blob per
-   project in a dedicated `revitExport` GridFS bucket — a published snapshot,
-   last-write-wins.
-2. In Revit: **Load from BIMy**, pick the project, and the add-in `GET`s those
-   bytes, runs them through Revit's IFC importer with parametric intent, and
+1. In BIMy: just design the building. Nothing needs to be published first.
+2. In Revit: **Load from BIMy**, pick the project, and the add-in `GET`s the
+   model's IFC, runs it through Revit's IFC importer with parametric intent, and
    saves the result as a native `.rvt`.
 
-Re-exporting in BIMy and re-pulling in Revit is the update path. The pull is
-conditional (`If-None-Match`), so pulling a project that hasn't been re-exported
-costs one round trip and offers you the copy you already have.
+The API serves the best bytes it has for the project: a snapshot published with
+**Export to Revit** (still the highest-fidelity path for models with baked
+edits), else the project's stored IFC model, else an IFC **generated on demand**
+from the project's drawings by the same generator the app itself uses. Any
+project is pullable by its id and a token — no export step, no ceremony.
+
+Editing in BIMy and re-pulling in Revit is the update path. The pull is
+conditional (`If-None-Match`), so pulling a project that hasn't changed costs
+one round trip and offers you the copy you already have.
 
 ---
 
@@ -134,10 +137,9 @@ costs one round trip and offers you the copy you already have.
 
 Disabled until a session has been verified. Opens the **project picker**:
 
-- your workspace's projects, by name and emoji, newest first;
-- a **READY** / **NOT EXPORTED** badge per project, from the publish index, so
-  you can see which models are actually pullable before clicking;
-- when each was exported, and when this machine last pulled it;
+- your workspace's projects, by name and emoji, newest first — every one of
+  them loadable, with no export step in the web app first;
+- when each was last edited, and when this machine last pulled it;
 - a search box, and **Open in BIMy ↗** for the selected project;
 - a paste field for a project id or any BIMy URL, for projects the list can't
   cover;
@@ -175,16 +177,15 @@ the first thing to ask for when a user reports a problem.
 ## Pulling a model
 
 1. **Add-Ins → BIMy → Set API token…** (once).
-2. In the BIMy web app, open the project and run **Export to Revit**.
-3. **Add-Ins → BIMy → Load from BIMy**, pick the project, click **Load**.
+2. **Add-Ins → BIMy → Load from BIMy**, pick the project, click **Load**.
 
 What happens then:
 
 | Situation | What the add-in does |
 | --- | --- |
-| Model was republished since your last pull | Downloads it (with a progress window), converts, asks where to save if a file is already there. |
+| Model changed since your last pull | Downloads it (with a progress window), converts, asks where to save if a file is already there. |
 | Nothing has changed since your last pull | Offers to open the copy you already have, or re-import from scratch. |
-| Project has never been exported to Revit | Explains that, with a link that opens the project in BIMy. |
+| Project has nothing to load (nothing drawn or imported yet) | Explains that, with a link that opens the project in BIMy. |
 | You already have a `.rvt` for this project | Asks: replace it, save alongside it as `Name (2).rvt`, or choose a location. |
 | That `.rvt` is open in Revit right now | Doesn't try to replace it — saves alongside and says so. |
 | You chose **Link** | Links the converted `.rvt` into the open document in one transaction. |
@@ -221,13 +222,13 @@ revit-plugin/
 ├── Models/
 │   ├── BimyEnvironment.cs       # environments + every URL the add-in calls
 │   ├── AuthDtos.cs              # BimyUser
-│   └── ProjectDtos.cs           # BimyProject, BimyPublishedModel
+│   └── ProjectDtos.cs           # BimyProject
 │
 ├── Services/
 │   ├── RevitIfcImporter.cs      # the pull: download → convert → open or link
 │   ├── TargetPath.cs            # where the .rvt lands, without clobbering work
 │   ├── PullCache.cs             # per-project ETag + local .rvt + last-pulled
-│   ├── BimyApi.cs               # auth verify, project list, publish index
+│   ├── BimyApi.cs               # auth verify, project list
 │   ├── JsonFetcher.cs           # HTTP: JSON fetch + conditional file download
 │   ├── BimyFetchException.cs    # non-2xx with the server's own message
 │   ├── BimyPaths.cs             # %LOCALAPPDATA%\BIMy — everything we write
@@ -238,7 +239,7 @@ revit-plugin/
 │
 └── UI/
     ├── BimyRibbon.cs            # panel: large Load button + stacked session items
-    ├── ProjectPickerDialog.cs   # the project list, search, badges, mode
+    ├── ProjectPickerDialog.cs   # the project list, search, mode
     ├── ProgressWindow.cs        # modal progress for the network phase
     └── SetApiTokenDialog.cs     # environment + token
 ```
@@ -253,8 +254,7 @@ Everything the add-in calls, all with `Authorization: Bearer <token>`:
 | --- | --- | --- |
 | `GET /api/auth` | Verify the token, identify the account. | Yes |
 | `GET /api/data?model=Project&sort=-_id&limit=200` | Fill the project picker. | No — falls back to the paste field |
-| `GET /api/export/revit-ifc` | Publish index: `[{ projectId, name, updatedAt, size }]`. | No — falls back to no badges |
-| `GET /api/export/revit-ifc/:projectId` | The published IFC (STEP bytes). | Yes |
+| `GET /api/export/revit-ifc/:projectId` | The project's IFC (STEP bytes), served on demand for any project. | Yes |
 
 The pull's response headers:
 
@@ -264,8 +264,9 @@ The pull's response headers:
 | `x-ifc-name` | Suggested file name — becomes the `.rvt` name when the picker didn't supply one. |
 | `x-ifc-updated` | When the model was published. |
 
-A `404` on the pull means "not exported to Revit yet" and is a normal state, not
-an error — the add-in says so and offers to open the project in BIMy.
+A `404` on the pull means the project has nothing to load yet (nothing drawn or
+imported), or the id doesn't resolve for this token — a normal state, not an
+error. The add-in says so and offers to open the project in BIMy.
 
 Both ends of this contract — the export route and the client-side IFC
 generator that feeds it — live in the BIMy web app, which is a separate,
@@ -438,9 +439,9 @@ so a non-default install location is the usual cause.
 **"Load from BIMy" is greyed out.**
 No verified session. **Set API token…**, then check **Status & log**.
 
-**"This project hasn't been exported to Revit yet".**
-Nobody has run **Export to Revit** in the web app for that project. The dialog
-offers a link straight to it.
+**"This project has nothing to load yet".**
+The project has no drawn or imported building for the API to serve. The dialog
+offers a link straight to it in BIMy.
 
 **"Your BIMy session was rejected".**
 The token is wrong, revoked, or belongs to a different environment. Generate a
@@ -450,9 +451,6 @@ to the host you use in the browser.
 **The project list is empty.**
 The token's workspace has no projects, or `/api/data` refused it. Paste the
 project id instead — the pull itself doesn't depend on the list.
-
-**The picker shows no READY / NOT EXPORTED badges.**
-The deployment predates `GET /api/export/revit-ifc`. Harmless; pulls still work.
 
 **Revit asks about unsigned add-ins on first load.**
 Expected until the installer is code-signed. Click **Always Load**.
