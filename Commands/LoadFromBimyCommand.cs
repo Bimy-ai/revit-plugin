@@ -65,6 +65,9 @@ public sealed class LoadFromBimyCommand : IExternalCommand
         }
 
         PullCache.RememberProjectId(env, pick.ProjectId);
-        return RevitIfcImporter.Run(uiApp, env, pick, token, ref message);
+        // Native first: drawn projects arrive as real Revit API elements. The
+        // importer itself falls back to the IFC pipeline for imported-IFC
+        // projects, older API deployments, and native-build failures.
+        return RevitNativeImporter.Run(uiApp, env, pick, token, ref message);
     }
 }

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 using System.Net;
 using Autodesk.Revit.DB;
@@ -10,20 +9,16 @@ using BimyRevit.UI;
 namespace BimyRevit.Services;
 
 /// <summary>
-/// Pulls a project's IFC from BIMy and turns it into a native Revit
-/// model. This is the whole import: BIMy's own generator
-/// (frontend/src/lib/ifc/ifcGenerate.js) writes the faithful building — walls,
-/// floors, ceilings, doors, windows, openings, spaces, materials and property
-/// sets — and Revit's native IFC importer turns every one of those into a
-/// first-class Revit element. There is no per-element creation code on this
-/// side, and deliberately so: it keeps a single authority for what a building IS
-/// (the app), instead of a second, ever-drifting one here.
+/// The IFC pull — now the FALLBACK path. The primary pull is
+/// <see cref="RevitNativeImporter"/> (parametric payload → native Revit API
+/// creation); this pipeline serves the projects native creation cannot: models
+/// IMPORTED into BIMy as IFC (the stored bytes are the faithful artifact, and
+/// Revit's IFC importer is the honest converter), published snapshots with
+/// baked edits, and older API deployments without the native route.
 ///
-/// What this file DOES own is everything around that conversion, which is where
-/// a pull actually goes wrong in practice: not re-downloading a model nobody
-/// republished, never silently overwriting a .rvt the user has since edited,
-/// putting the result somewhere they can find it again, and saying plainly what
-/// came across.
+/// What this file owns is everything around that conversion: conditional
+/// download, never clobbering an edited .rvt, and saying what came across —
+/// all shared with the native path through <see cref="PullUx"/>.
 /// </summary>
 internal static class RevitIfcImporter
 {
@@ -61,6 +56,9 @@ internal static class RevitIfcImporter
         var hwnd = uiApp.MainWindowHandle;
 
         // ── 1. Pull the project's IFC (conditionally) ────────────────────────
+        // The cached ETag may belong to the native payload (the primary path
+        // writes it); the IFC route then simply answers 200 with fresh bytes —
+        // a harmless full download, never a wrong 304.
         var ifcPath = Path.Combine(BimyPaths.ModelDir(projectId), "model.ifc");
         JsonFetcher.DownloadResult download;
         try
@@ -73,23 +71,18 @@ internal static class RevitIfcImporter
                     url, token, ifcPath,
                     ifNoneMatch: cached?.ETag,
                     bytesRead: new Progress<long>(bytes =>
-                        progress.Report($"Downloading the model… {Megabytes(bytes)}")),
+                        progress.Report($"Downloading the model… {PullUx.Megabytes(bytes)}")),
                     ct: default));
         }
         catch (BimyFetchException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
-            ShowNothingToLoad(env, projectId, ex);
+            PullUx.ShowNothingToLoad(env, projectId, ex.ServerMessage);
             return Result.Cancelled;
         }
         catch (BimyFetchException ex) when (ex.StatusCode == HttpStatusCode.Unauthorized
                                          || ex.StatusCode == HttpStatusCode.Forbidden)
         {
-            new TaskDialog("Load from BIMy")
-            {
-                MainIcon = TaskDialogIcon.TaskDialogIconWarning,
-                MainInstruction = "Your BIMy session was rejected",
-                MainContent = "Re-connect with BIMy → Set API token…, then try again.",
-            }.Show();
+            PullUx.ShowSessionRejected();
             return Result.Cancelled;
         }
         catch (Exception ex)
@@ -99,7 +92,7 @@ internal static class RevitIfcImporter
             return Result.Failed;
         }
 
-        var projectName = ResolveProjectName(pick, download, cached, projectId);
+        var projectName = PullUx.ResolveProjectName(pick, download, cached, projectId);
 
         // ── 2. Nothing new? Offer the copy already on this machine ───────────
         // Re-converting an unchanged model costs a minute of Revit's time and
@@ -110,10 +103,10 @@ internal static class RevitIfcImporter
             Log.Info($"Server reports no change since the last pull of {projectId}.");
             if (cached?.HasLocalCopy == true)
             {
-                var choice = AskUpToDate(projectName, cached.RvtPath!, pick.Mode);
-                if (choice == UpToDateChoice.Cancel) return Result.Cancelled;
-                if (choice == UpToDateChoice.UseLocal)
-                    return Deliver(uiApp, cached.RvtPath!, projectName, pick.Mode, counts: null, republished: false, ref message);
+                var choice = PullUx.AskUpToDate(projectName, cached.RvtPath!, pick.Mode);
+                if (choice == PullUx.UpToDateChoice.Cancel) return Result.Cancelled;
+                if (choice == PullUx.UpToDateChoice.UseLocal)
+                    return PullUx.Deliver(uiApp, cached.RvtPath!, projectName, pick.Mode, counts: null, republished: false, ref message);
                 // Re-import: fall through, but the conditional request wrote
                 // nothing — re-fetch unconditionally so there IS an IFC on disk.
                 try
@@ -123,7 +116,7 @@ internal static class RevitIfcImporter
                             url, token, ifcPath,
                             ifNoneMatch: null,
                             bytesRead: new Progress<long>(bytes =>
-                                progress.Report($"Re-downloading the model… {Megabytes(bytes)}")),
+                                progress.Report($"Re-downloading the model… {PullUx.Megabytes(bytes)}")),
                             ct: default));
                 }
                 catch (Exception ex)
@@ -144,7 +137,7 @@ internal static class RevitIfcImporter
                         await JsonFetcher.DownloadToFileAsync(
                             url, token, ifcPath, ifNoneMatch: null,
                             bytesRead: new Progress<long>(bytes =>
-                                progress.Report($"Downloading the model… {Megabytes(bytes)}")),
+                                progress.Report($"Downloading the model… {PullUx.Megabytes(bytes)}")),
                             ct: default));
                 }
                 catch (Exception ex)
@@ -193,7 +186,7 @@ internal static class RevitIfcImporter
             RvtPath = target,
         });
 
-        return Deliver(uiApp, target, projectName, pick.Mode, counts, republished: true, ref message);
+        return PullUx.Deliver(uiApp, target, projectName, pick.Mode, counts, republished: true, ref message);
     }
 
     /// <summary>
@@ -273,189 +266,4 @@ internal static class RevitIfcImporter
             : string.Join(", ", counts.Select(kv => $"{kv.Value} {kv.Key.ToLowerInvariant()}"))));
         return counts;
     }
-
-    /// <summary>Opens or links the finished .rvt and reports what happened.</summary>
-    private static Result Deliver(
-        UIApplication uiApp,
-        string rvtPath,
-        string projectName,
-        PullMode mode,
-        IReadOnlyDictionary<string, int>? counts,
-        bool republished,
-        ref string message)
-    {
-        if (mode == PullMode.LinkIntoCurrent)
-        {
-            var doc = uiApp.ActiveUIDocument?.Document;
-            if (doc is null)
-            {
-                // The picker only offers Link with a document open, but the user
-                // can close it while the dialog is up.
-                Log.Warn("Link was requested but no document is open — opening instead.");
-                mode = PullMode.OpenNew;
-            }
-            else
-            {
-                try
-                {
-                    LinkInto(doc, rvtPath);
-                    ShowSummary(projectName, rvtPath, counts, linked: true, republished);
-                    return Result.Succeeded;
-                }
-                catch (Exception ex)
-                {
-                    Log.Error("Could not link the pulled model.", ex);
-                    message = $"The model was saved to {rvtPath}, but linking it failed: {ex.Message}";
-                    return Result.Failed;
-                }
-            }
-        }
-
-        try
-        {
-            uiApp.OpenAndActivateDocument(rvtPath);
-            Log.Info($"Opened pulled model as {rvtPath}");
-        }
-        catch (Exception ex)
-        {
-            Log.Error("Could not open the converted model.", ex);
-            message = $"The model was saved to {rvtPath}, but Revit could not open it: {ex.Message}";
-            return Result.Failed;
-        }
-
-        ShowSummary(projectName, rvtPath, counts, linked: false, republished);
-        return Result.Succeeded;
-    }
-
-    private static void LinkInto(Document doc, string rvtPath)
-    {
-        using var tx = new Transaction(doc, "Link BIMy model");
-        tx.Start();
-
-        var path = ModelPathUtils.ConvertUserVisiblePathToModelPath(rvtPath);
-        // Relative path type (the ctor's bool): the link keeps resolving when
-        // the host project and the pulled model move together, which is what
-        // happens the moment someone copies both onto a shared drive.
-        var link = RevitLinkType.Create(doc, path, new RevitLinkOptions(true));
-        RevitLinkInstance.Create(doc, link.ElementId);
-
-        tx.Commit();
-        Log.Info($"Linked {rvtPath} into {doc.Title}.");
-    }
-
-    // ── Dialogs ─────────────────────────────────────────────────────────────
-
-    private enum UpToDateChoice { UseLocal, Reimport, Cancel }
-
-    private static UpToDateChoice AskUpToDate(string projectName, string rvtPath, PullMode mode)
-    {
-        var dialog = new TaskDialog("Load from BIMy")
-        {
-            MainIcon = TaskDialogIcon.TaskDialogIconInformation,
-            MainInstruction = $"“{projectName}” hasn't changed since you last pulled it",
-            MainContent = "The model hasn't changed in BIMy since this machine downloaded it.",
-            CommonButtons = TaskDialogCommonButtons.Cancel,
-            DefaultButton = TaskDialogResult.CommandLink1,
-        };
-        dialog.AddCommandLink(TaskDialogCommandLinkId.CommandLink1,
-            mode == PullMode.LinkIntoCurrent ? "Link the copy I already have" : "Open the copy I already have",
-            rvtPath);
-        dialog.AddCommandLink(TaskDialogCommandLinkId.CommandLink2,
-            "Import it again anyway",
-            "Downloads and converts the model from scratch. Use this if your local copy was damaged or edited.");
-
-        return dialog.Show() switch
-        {
-            TaskDialogResult.CommandLink1 => UpToDateChoice.UseLocal,
-            TaskDialogResult.CommandLink2 => UpToDateChoice.Reimport,
-            _ => UpToDateChoice.Cancel,
-        };
-    }
-
-    // The API serves every project's model on demand, so a 404 stopped meaning
-    // "not exported yet" — it now means the project has nothing to load at all
-    // (nothing drawn or imported), or the id doesn't resolve for this token.
-    private static void ShowNothingToLoad(BimyEnvironment env, string projectId, BimyFetchException ex)
-    {
-        var dialog = new TaskDialog("Load from BIMy")
-        {
-            MainIcon = TaskDialogIcon.TaskDialogIconInformation,
-            MainInstruction = "This project has nothing to load yet",
-            MainContent =
-                "Draw or import a building in BIMy first, then run Load from BIMy again. "
-                + "If you pasted an id, check it belongs to a project this account can open."
-                + (string.IsNullOrWhiteSpace(ex.ServerMessage) ? "" : "\n\n" + ex.ServerMessage),
-            CommonButtons = TaskDialogCommonButtons.Close,
-        };
-        dialog.AddCommandLink(TaskDialogCommandLinkId.CommandLink1,
-            "Open this project in BIMy",
-            BimyEnvironments.ProjectWebUrl(env, projectId));
-
-        if (dialog.Show() == TaskDialogResult.CommandLink1)
-            OpenInShell(BimyEnvironments.ProjectWebUrl(env, projectId));
-    }
-
-    private static void ShowSummary(
-        string projectName,
-        string rvtPath,
-        IReadOnlyDictionary<string, int>? counts,
-        bool linked,
-        bool republished)
-    {
-        var what = counts is { Count: > 0 }
-            ? string.Join("\n", counts.Select(kv => $"    {kv.Value,6:N0}   {kv.Key}"))
-            : "The model opened with walls, floors, ceilings, doors, windows, openings,\nspaces, materials and properties as native Revit elements.";
-
-        var lead = linked
-            ? $"Linked “{projectName}” from BIMy"
-            : $"Loaded “{projectName}” from BIMy";
-        if (!republished) lead += " (your existing copy)";
-
-        var dialog = new TaskDialog("Load from BIMy")
-        {
-            MainIcon = TaskDialogIcon.TaskDialogIconInformation,
-            MainInstruction = lead,
-            MainContent = what + "\n\nSaved to:\n" + rvtPath,
-            CommonButtons = TaskDialogCommonButtons.Close,
-        };
-        dialog.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Show the file in Explorer");
-
-        if (dialog.Show() == TaskDialogResult.CommandLink1)
-            OpenInShell("/select,\"" + rvtPath + "\"", "explorer.exe");
-    }
-
-    private static void OpenInShell(string argument, string? executable = null)
-    {
-        try
-        {
-            var info = executable is null
-                ? new ProcessStartInfo(argument) { UseShellExecute = true }
-                : new ProcessStartInfo(executable, argument);
-            Process.Start(info);
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"Could not launch shell for '{argument}': {ex.Message}");
-        }
-    }
-
-    // ── Helpers ─────────────────────────────────────────────────────────────
-
-    private static string ResolveProjectName(
-        PickResult pick,
-        JsonFetcher.DownloadResult download,
-        PullCache.PullRecord? cached,
-        string projectId)
-    {
-        // The picker's name is the one the user just read off the list, so it
-        // wins. The server's x-ifc-name is next (it carries the project name at
-        // publish time), then whatever this machine recorded on the last pull.
-        if (!string.IsNullOrWhiteSpace(pick.ProjectName)) return pick.ProjectName!.Trim();
-        if (!string.IsNullOrWhiteSpace(download.SuggestedName))
-            return Path.GetFileNameWithoutExtension(download.SuggestedName!);
-        if (!string.IsNullOrWhiteSpace(cached?.Name)) return cached!.Name!;
-        return "BIMy model " + projectId[..Math.Min(8, projectId.Length)];
-    }
-
-    private static string Megabytes(long bytes) => $"{bytes / 1024d / 1024d:0.0} MB";
 }

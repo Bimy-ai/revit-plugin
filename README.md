@@ -5,7 +5,7 @@
 [![license](https://img.shields.io/github/license/Bimy-ai/revit-plugin)](LICENSE)
 [![Revit 2022–2030](https://img.shields.io/badge/Revit-2022%E2%80%932030-005f9e)](#requirements)
 
-A Revit 2022–2030 add-in that pulls a building you designed in [BIMy](https://bimy.app) into Revit as a **native, editable Revit model** — walls, floors, ceilings, roofs, doors, windows, openings, rooms/spaces, materials and property sets, all as real Revit elements in their real Revit categories.
+A Revit 2022–2030 add-in that pulls a building you designed in [BIMy](https://bimy.app) into Revit as a **native, editable Revit model** — built with the real Revit API: `Wall.Create` on the line you drew (location line included), hosted door and window family instances, floor and ceiling sketches, footprint roofs with their pitch, rooms, grids, layered compound types and materials. Projects that were *imported* into BIMy as IFC still arrive through Revit's IFC importer — the faithful path for them — automatically.
 
 It adds a **BIMy** panel to the **Add-Ins** ribbon tab:
 
@@ -72,28 +72,39 @@ To uninstall: **Start → BIMy for Revit → Uninstall**, or Add/Remove Programs
 
 ## How it works
 
-**The app writes the building; Revit reads it.** There is deliberately no
-per-element creation code in this add-in.
+**The app decides what the building is; the plug-in decides how it arrives.**
 
-BIMy's own IFC generator already knows exactly what the building is — it is the same code path that powers the app's
-IFC export, complete with element types, material layers, openings, derived
-rooms and property sets. Revit's native IFC importer already knows exactly how
-to turn every one of those into a first-class Revit element.
+For a building **drawn in BIMy**, the API serves a parametric payload
+(`bimy-revit-model/1`) written by the same generator that powers the app's IFC
+export — the one authority on what the building is. The add-in maps it ~1:1
+onto Revit API calls: walls on their drawn reference lines (arcs included),
+doors and windows as family instances hosted at their real centres, floors and
+ceilings as sketch loops with the app's offsets, roofs as footprint roofs with
+`DefinesSlope` on exactly the eaves the app computed, rooms placed inside their
+derived boundaries, grids, layered compound types, and materials under Revit
+template names. Revit itself does the joining, hosting, cutting and flooding —
+which is precisely what makes the result feel authored rather than imported.
 
-An earlier version of this plug-in sat between them: it fetched BIMy's raw
-`userObjects` and rebuilt the geometry with `Wall.Create`, `Floor.Create`,
-compound structures, level stacks and so on — around 2 400 lines of it. That is
-a *second* authority for what a building is, and it drifted from the first with
-every feature the app shipped: doors and windows never arrived, materials were
-dropped, ceilings were approximations. Deleting it in favour of the IFC the app
-already generates removed the drift permanently. Anything BIMy learns to draw
-arrives in Revit with no plug-in release.
+An earlier native importer died of **drift**: it re-derived geometry from raw
+`userObjects` in C#, a second authority that fell behind the app (deleted in
+`6bed0aa`; the IFC pipeline replaced it). This one cannot drift the same way:
+the payload is emitted by the app's own element enumeration, parity tests on
+both repos pin payload-vs-IFC element counts, and anything the serializer does
+not recognise lands in an `unhandled` list the tests refuse — and the summary
+reports. See [docs/native-import-plan.md](docs/native-import-plan.md) for the
+full design.
 
-What this add-in owns is everything *around* that conversion, which is where a
-pull actually goes wrong in practice:
+For a model **imported into BIMy as IFC** (and for older API deployments), the
+previous pipeline still runs unchanged: the stored IFC — the faithful artifact
+— goes through Revit's native IFC importer. The server tells the add-in which
+path applies; a native-build failure also offers the IFC route, so no project
+that pulled before can stop pulling.
+
+What this add-in owns besides the build is everything *around* a pull, which is
+where pulls actually go wrong in practice:
 
 - finding the right project without making you copy a 24-character id,
-- not re-downloading and re-converting a model nobody republished,
+- not re-downloading and re-building a model nobody republished,
 - never silently overwriting a `.rvt` you have since edited in Revit,
 - putting the result somewhere you can find it again,
 - and saying plainly what came across.
@@ -103,28 +114,27 @@ pull actually goes wrong in practice:
 ## The round trip
 
 ```
-   BIMy web app                    BIMy API                     Revit
- ┌──────────────┐          ┌──────────────────────┐      ┌──────────────────┐
- │ draw / import│   save   │ /api/export/         │      │ Load from BIMy   │
- │ the building ├─────────►│   revit-ifc/:project ├─────►│                  │
- │              │          │                      │ GET  │  ├ download      │
- │ (optional:   │          │ snapshot | stored IFC│ IFC  │  ├ OpenIFCDocument│
- │  Export to   │  PUT     │ | generated on demand│      │  ├ SaveAs .rvt   │
- │  Revit)      │  IFC4    │   from the drawings  │      │  └ open or link  │
- └──────────────┘          └──────────────────────┘      └──────────────────┘
+   BIMy web app                    BIMy API                        Revit
+ ┌──────────────┐          ┌─────────────────────────┐      ┌───────────────────────┐
+ │ draw / import│   save   │ /api/export/            │ JSON │ Load from BIMy        │
+ │ the building ├─────────►│   revit-model/:project ─┼─────►│  ├ Wall.Create, doors,│
+ │              │          │   (drawn → parametric   │      │  │ floors, roofs,     │
+ │ (optional:   │          │    payload; imported →  │      │  │ rooms, types, mats │
+ │  Export to   │  PUT     │    "fallback" marker)   │      │  ├ SaveAs .rvt        │
+ │  Revit)      │  IFC4    │ /api/export/            │ IFC  │  └ open or link       │
+ └──────────────┘          │   revit-ifc/:project ───┼─────►│ (fallback: Revit's    │
+                           │   snapshot|stored|gen'd │      │  IFC importer)        │
+                           └─────────────────────────┘      └───────────────────────┘
 ```
 
 1. In BIMy: just design the building. Nothing needs to be published first.
-2. In Revit: **Load from BIMy**, pick the project, and the add-in `GET`s the
-   model's IFC, runs it through Revit's IFC importer with parametric intent, and
-   saves the result as a native `.rvt`.
+2. In Revit: **Load from BIMy**, pick the project. The add-in `GET`s the
+   parametric payload and **builds the model with the Revit API** — or, for a
+   project whose model is an imported IFC, follows the server's fallback marker
+   through Revit's IFC importer exactly as before. Either way the result is
+   saved as a native `.rvt`.
 
-The API serves the best bytes it has for the project: a snapshot published with
-**Export to Revit** (still the highest-fidelity path for models with baked
-edits), else the project's stored IFC model, else an IFC **generated on demand**
-from the project's drawings by the same generator the app itself uses. Any
-project is pullable by its id and a token — no export step, no ceremony.
-
+Any project is pullable by its id and a token — no export step, no ceremony.
 Editing in BIMy and re-pulling in Revit is the update path. The pull is
 conditional (`If-None-Match`), so pulling a project that hasn't changed costs
 one round trip and offers you the copy you already have.
@@ -221,11 +231,31 @@ revit-plugin/
 │
 ├── Models/
 │   ├── BimyEnvironment.cs       # environments + every URL the add-in calls
+│   ├── RevitModelDtos.cs        # the bimy-revit-model/1 payload contract
 │   ├── AuthDtos.cs              # BimyUser
 │   └── ProjectDtos.cs           # BimyProject
 │
 ├── Services/
-│   ├── RevitIfcImporter.cs      # the pull: download → convert → open or link
+│   ├── RevitNativeImporter.cs   # THE pull: payload → native build → open/link
+│   ├── RevitIfcImporter.cs      # the IFC fallback (imported models, old APIs)
+│   ├── PullUx.cs                # dialogs + open/link delivery both paths share
+│   ├── Import/
+│   │   ├── NativeModelBuilder.cs    # new doc from the user's template; phases
+│   │   ├── BuildContext.cs          # levels/materials/types/walls registries
+│   │   ├── LevelFactory.cs          # levels + plans, template-ghost cleanup
+│   │   ├── GridFactory.cs           # named grid axes
+│   │   ├── MaterialFactory.cs       # template-name reuse, colour, solid fills
+│   │   ├── TypeFactory.cs           # compound structures; door/window symbols
+│   │   ├── WallFactory.cs           # Wall.Create, location line, constraints
+│   │   ├── OpeningFactory.cs        # hosted doors/windows; wall openings
+│   │   ├── SlabFactory.cs           # Floor.Create / Ceiling.Create (+ slope)
+│   │   ├── RoofFactory.cs           # FootPrintRoof + exact-mesh fallback
+│   │   ├── SolidFactory.cs          # stairs/ramps/foundations… as DirectShapes
+│   │   ├── FurnitureFactory.cs      # catalog objects: shared DirectShapeTypes
+│   │   ├── RoomFactory.cs           # rooms at the app's interior points
+│   │   ├── ImportGeometry.cs        # mm→ft, rings→CurveLoops, arcs
+│   │   ├── ParamSet.cs              # guarded parameter writes
+│   │   └── SuppressWarningsPreprocessor.cs
 │   ├── TargetPath.cs            # where the .rvt lands, without clobbering work
 │   ├── PullCache.cs             # per-project ETag + local .rvt + last-pulled
 │   ├── BimyApi.cs               # auth verify, project list
@@ -254,7 +284,8 @@ Everything the add-in calls, all with `Authorization: Bearer <token>`:
 | --- | --- | --- |
 | `GET /api/auth` | Verify the token, identify the account. | Yes |
 | `GET /api/data?model=Project&sort=-_id&limit=200` | Fill the project picker. | No — falls back to the paste field |
-| `GET /api/export/revit-ifc/:projectId` | The project's IFC (STEP bytes), served on demand for any project. | Yes |
+| `GET /api/export/revit-model/:projectId` | The parametric `bimy-revit-model/1` JSON for native creation; answers `{"fallback":"revit-ifc"}` for imported-IFC projects. | No — a 404 (older API) falls back to the IFC call |
+| `GET /api/export/revit-ifc/:projectId` | The project's IFC (STEP bytes), served on demand — the fallback path. | Yes |
 
 The pull's response headers:
 
@@ -404,7 +435,8 @@ people out).
 | --- | --- |
 | `session.json` | Environment + DPAPI-encrypted API token (current Windows user only). Migrated automatically from the old next-to-the-DLL location. |
 | `pulls.json` | Per environment + project: last ETag, publish time, the `.rvt` path, and when it was pulled. |
-| `models\<projectId>\model.ifc` | The downloaded IFC. Scratch — safe to delete. |
+| `models\<projectId>\model.json` | The downloaded native payload. Scratch — safe to delete. |
+| `models\<projectId>\model.ifc` | The downloaded IFC (fallback path). Scratch — safe to delete. |
 | `bimy.log` | Append-only run log. Never auto-truncated. |
 
 Pulled Revit files go to `Documents\BIMy Models\` unless you choose otherwise.
@@ -475,15 +507,17 @@ invisible to it. Open an issue with your install path.
 
 | Need | Where |
 | --- | --- |
-| A new element kind in Revit | **Not here.** Teach BIMy's IFC generator to write it; Revit's importer picks it up with no plug-in change at all. |
-| Better Revit material names | Also upstream — the canonical → Revit template name map lives with the generator. |
-| Import options (link vs open, intent, auto-join) | `Services/RevitIfcImporter.ConvertToRevit`. |
+| A new element kind in Revit | Upstream first: the app's serializer (`frontend lib/ifc/revitModel.js`) must emit it — its parity tests force that. Then a factory in `Services/Import/` maps it to the Revit API (and until one exists, it is counted in the summary, never silently dropped). |
+| Better Revit material names | Upstream — the canonical → Revit template name map (`materialBridge.js`) feeds both the payload and the IFC. |
+| How a payload element becomes a Revit element | `Services/Import/*Factory.cs` — one factory per concern (walls, openings, slabs, roofs, solids, objects, rooms). |
+| IFC fallback options (intent, auto-join) | `Services/RevitIfcImporter.ConvertToRevit`. |
 | Different save behaviour | `Services/TargetPath`. |
 | More columns / filters in the picker | `UI/ProjectPickerDialog` + `Models/ProjectDtos`. |
 | A new endpoint | `Models/BimyEnvironment` (URL) + `Services/BimyApi` (call). |
 
-The rule that keeps this small: **the app decides what a building is; the
-plug-in decides how it arrives.** Anything geometric belongs upstream.
+The rule that keeps this honest: **the app decides what a building is; the
+plug-in decides how it arrives.** All geometry *resolution* stays upstream —
+this side maps resolved numbers onto Revit API calls and nothing more.
 
 ---
 

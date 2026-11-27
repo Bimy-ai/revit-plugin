@@ -41,11 +41,21 @@ public static class BimyEnvironments
     public static string AuthUrl(BimyEnvironment env) => BaseUrl(env) + "/api/auth";
 
     /// <summary>
-    /// The project's Revit model: the faithful IFC (walls, floors, ceilings,
-    /// doors, windows, openings, spaces, materials, property sets), served on
-    /// demand for ANY project — the freshest of a published snapshot, the
-    /// project's stored model, or a server-side generation from its drawings.
-    /// Pulled by the plugin and opened natively.
+    /// The PRIMARY pull: the project's parametric `bimy-revit-model/1` JSON,
+    /// generated on demand from its drawings — the plugin turns it into native
+    /// Revit elements. Imported-IFC projects answer a fallback marker and the
+    /// pull continues at <see cref="RevitIfcUrl"/>; older deployments without
+    /// this route 404, which the plugin treats the same way.
+    /// </summary>
+    public static string RevitModelUrl(BimyEnvironment env, string projectId)
+        => $"{BaseUrl(env)}/api/export/revit-model/{projectId}";
+
+    /// <summary>
+    /// The IFC fallback: the faithful IFC (walls, floors, ceilings, doors,
+    /// windows, openings, spaces, materials, property sets), served on demand
+    /// for ANY project — the freshest of a published snapshot, the project's
+    /// stored model, or a server-side generation from its drawings. Run through
+    /// Revit's IFC importer when native creation doesn't apply.
     /// </summary>
     public static string RevitIfcUrl(BimyEnvironment env, string projectId)
         => $"{BaseUrl(env)}/api/export/revit-ifc/{projectId}";
