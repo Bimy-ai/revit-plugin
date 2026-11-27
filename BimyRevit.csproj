@@ -14,6 +14,10 @@
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <AssemblyName>BimyRevit</AssemblyName>
     <RootNamespace>BimyRevit</RootNamespace>
+    <!-- Stamped into the assembly so Status & log reports the REAL build.
+         Keep in step with installer\BIMy.iss's fallback AppVersion; the
+         release tag still rules the Setup.exe's own version. -->
+    <Version>1.5.1</Version>
   </PropertyGroup>
 
   <!-- Revit install root. Override on the command line with:
